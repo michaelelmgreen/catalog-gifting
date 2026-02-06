@@ -1,4 +1,6 @@
 const express = require('express');
+const https = require('https');
+const fs = require('fs');
 const fetch = require('node-fetch');
 const path = require('path');
 const cors = require('cors');
@@ -94,6 +96,13 @@ app.get('/profiles/gift-agent.json', (req, res) => {
 // Serve static frontend
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Config endpoint — serves public API keys to the frontend
+app.get('/api/config', (req, res) => {
+  res.json({
+    googlePlacesApiKey: process.env.GOOGLE_PLACES_API_KEY || ''
+  });
+});
+
 // Products endpoint: proxy to Shopify Catalog API or return mock
 app.get('/api/products', async (req, res) => {
   const q = (req.query.q || '').trim();
@@ -176,8 +185,8 @@ app.post('/api/groups/:id/members', (req, res) => {
 app.post('/api/groups/:id/recipient', (req, res) => {
   const group = groups[req.params.id];
   if (!group) return res.status(404).json({ error: 'Group not found' });
-  const { firstName, lastName, address1, address2, city, state, provinceCode, postalCode, country } = req.body;
-  group.recipient = { firstName, lastName, address1, address2, city, state, provinceCode, postalCode, country };
+  const { firstName, lastName, phone, address1, address2, city, state, provinceCode, postalCode, country } = req.body;
+  group.recipient = { firstName, lastName, phone, address1, address2, city, state, provinceCode, postalCode, country };
   res.json({ recipient: group.recipient });
 });
 
@@ -228,7 +237,8 @@ app.post('/api/create-checkout', async (req, res) => {
             }
           ],
           buyer: {
-            email: group.lead.email   // Lead gets order emails → surprise preserved
+            email: group.lead.email,   // Lead gets order emails → surprise preserved
+            phone_number: group.recipient.phone || ''
           },
           fulfillment: {
             methods: [
@@ -238,6 +248,7 @@ app.post('/api/create-checkout', async (req, res) => {
                   {
                     first_name: group.recipient.firstName,
                     last_name: group.recipient.lastName,
+                    phone_number: group.recipient.phone || '',
                     street_address: group.recipient.address1,
                     address_locality: group.recipient.city,
                     address_region: group.recipient.provinceCode || group.recipient.state,
@@ -327,6 +338,158 @@ app.post('/api/create-checkout', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Tokenize credit card via Shopify Card Server
+// POST https://checkout.pci.shopifyinc.com/sessions
+// ---------------------------------------------------------------------------
+app.post('/api/tokenize-card', async (req, res) => {
+  const { cardNumber, name, month, year, cvv, shopDomain } = req.body;
+
+  if (!cardNumber || !name || !month || !year || !cvv) {
+    return res.status(400).json({ error: 'All card fields are required' });
+  }
+
+  try {
+    const cardServerUrl = 'https://checkout.pci.shopifyinc.com/sessions';
+    console.log('[CardServer] Tokenizing card for', shopDomain);
+
+    const tokenRes = await fetch(cardServerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        credit_card: {
+          number: cardNumber.replace(/\s/g, ''),
+          name,
+          month: parseInt(month),
+          year: parseInt(year),
+          verification_value: cvv,
+          start_month: null,
+          start_year: null,
+          issue_number: ''
+        },
+        payment_session_scope: `https://${shopDomain}`
+      })
+    });
+
+    const data = await tokenRes.json();
+    console.log('[CardServer] Response:', JSON.stringify(data, null, 2));
+
+    if (data.id) {
+      res.json({ success: true, sessionToken: data.id });
+    } else {
+      res.status(400).json({ success: false, error: data.error || 'Card tokenization failed', raw: data });
+    }
+  } catch (err) {
+    console.error('[CardServer] Error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Complete checkout via Shopify UCP/MCP
+// POST https://{shopDomain}/api/ucp/mcp  (JSON-RPC 2.0)
+// Uses the dev.shopify.card payment handler with a tokenized card
+// ---------------------------------------------------------------------------
+app.post('/api/complete-checkout', async (req, res) => {
+  const { checkoutId, sessionToken, billingAddress, shopDomain } = req.body;
+
+  if (!checkoutId || !sessionToken || !shopDomain) {
+    return res.status(400).json({ error: 'checkoutId, sessionToken, and shopDomain are required' });
+  }
+
+  let token;
+  try {
+    token = await getCatalogToken();
+  } catch (err) {
+    return res.status(500).json({ error: 'Failed to get auth token: ' + err.message });
+  }
+
+  const billing = billingAddress || {};
+  const jsonRpcBody = {
+    jsonrpc: '2.0',
+    method: 'tools/call',
+    id: 2,
+    params: {
+      name: 'complete_checkout',
+      arguments: {
+        meta: {
+          'idempotency-key': uuidv4(),
+          'ucp-agent': {
+            profile: process.env.AGENT_PROFILE_URL || `http://localhost:${PORT}/profiles/gift-agent.json`
+          }
+        },
+        id: checkoutId,
+        payment: {
+          instruments: [
+            {
+              id: 'instrument_1',
+              handler_id: 'shopify.card',
+              type: 'card',
+              selected: true,
+              credential: {
+                type: 'shopify_token',
+                token: sessionToken
+              },
+              billing_address: {
+                first_name: billing.firstName || '',
+                last_name: billing.lastName || '',
+                phone_number: billing.phone || '',
+                street_address: billing.address1 || '',
+                address_locality: billing.city || '',
+                address_region: billing.state || '',
+                postal_code: billing.postalCode || '',
+                address_country: billing.country || 'US'
+              }
+            }
+          ]
+        }
+      }
+    }
+  };
+
+  const ucpUrl = `https://${shopDomain}/api/ucp/mcp`;
+  console.log('[UCP] Complete checkout POST', ucpUrl);
+  console.log('[UCP] Body:', JSON.stringify(jsonRpcBody, null, 2));
+
+  try {
+    const ucpRes = await fetch(ucpUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(jsonRpcBody)
+    });
+
+    const data = await ucpRes.json();
+    console.log('[UCP] Complete response:', JSON.stringify(data, null, 2));
+
+    let result = data;
+    if (data.result?.content?.[0]?.text) {
+      try { result = JSON.parse(data.result.content[0].text); } catch (_) { result = data.result.content[0].text; }
+    } else if (data.error) {
+      const errDataStr = data.error.data
+        ? (typeof data.error.data === 'string' ? data.error.data : JSON.stringify(data.error.data))
+        : '';
+      throw { message: data.error.message + (errDataStr ? ` – ${errDataStr}` : '') };
+    }
+
+    res.json({
+      success: true,
+      status: result?.status || null,
+      orderId: result?.order?.id || null,
+      messages: result?.messages || [],
+      mcpResponse: result
+    });
+  } catch (err) {
+    console.error('[UCP] Complete error:', err);
+    res.status(500).json({
+      success: false,
+      error: typeof err === 'object' ? (err.message || JSON.stringify(err)) : String(err)
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Build Embedded Checkout URL (ECP)
 // Takes a continue_url from a requires_escalation response, appends
 // ec_version, ec_auth (Catalog API JWT), and ec_delegate params.
@@ -342,11 +505,17 @@ app.post('/api/embedded-checkout-url', async (req, res) => {
     const token = await getCatalogToken();
     const checkoutURL = new URL(continue_url);
 
+    // ECP query params per https://ucp.dev/specification/embedded-checkout/
     checkoutURL.searchParams.set('ec_version', '2026-01-11');
     checkoutURL.searchParams.set('ec_auth', token);
-    // Only delegate fulfillment address – we manage the recipient address,
-    // but let the buyer handle payment natively in the checkout UI.
+    // Delegate fulfillment address — checkout will fire
+    // ec.fulfillment.address_change_request which the host responds to.
+    // Payment is NOT delegated; the embedded checkout handles it.
     checkoutURL.searchParams.set('ec_delegate', 'fulfillment.address_change');
+    // Skip Shop Pay redirect — without this the continue_url redirects
+    // through shop.app which requires an active Shop Pay session,
+    // causing a redirect loop that ends at the shop homepage.
+    checkoutURL.searchParams.set('skip_shop_pay', 'true');
 
     console.log('[ECP] Built embedded URL:', checkoutURL.toString());
     res.json({ embedded_url: checkoutURL.toString() });
@@ -362,4 +531,16 @@ app.get('/api/groups/:id', (req, res) => {
   res.json({ group });
 });
 
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+// ---------------------------------------------------------------------------
+// Start HTTPS server (self-signed cert for local dev).
+// Shopify checkout CSP requires the host to be HTTPS for iframe embedding.
+// On first visit, accept the self-signed cert warning in your browser.
+// ---------------------------------------------------------------------------
+const sslOptions = {
+  key: fs.readFileSync(path.join(__dirname, 'key.pem')),
+  cert: fs.readFileSync(path.join(__dirname, 'cert.pem')),
+};
+
+https.createServer(sslOptions, app).listen(PORT, () => {
+  console.log(`🔒 HTTPS server running on https://localhost:${PORT}`);
+});

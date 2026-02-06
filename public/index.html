@@ -4,15 +4,49 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
   <title>Gift Registry</title>
-  <!-- Google Fonts -->
+  <!-- Google Fonts — Partiful-inspired playful type -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <!-- Material Icons -->
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Roboto', sans-serif; background: #f5f5f5; }
+    body {
+      font-family: 'DM Sans', -apple-system, sans-serif;
+      background: linear-gradient(145deg, #fdf4f0 0%, #f0e6ff 35%, #e8f4fd 65%, #fef4e8 100%);
+      background-attachment: fixed;
+      min-height: 100vh;
+    }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
+    ::selection { background: #e8c8ff; }
+    /* Google Places autocomplete dropdown styling */
+    .pac-container {
+      font-family: 'DM Sans', -apple-system, sans-serif;
+      border-radius: 16px;
+      border: 1px solid rgba(124,58,237,0.12);
+      box-shadow: 0 8px 32px rgba(124,58,237,0.12);
+      margin-top: 4px;
+      overflow: hidden;
+    }
+    .pac-item {
+      padding: 10px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      border-top: 1px solid rgba(0,0,0,0.04);
+    }
+    .pac-item:first-child { border-top: none; }
+    .pac-item:hover, .pac-item-selected {
+      background: #f3e8ff;
+    }
+    .pac-item-query {
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+    .pac-icon { display: none; }
+    .pac-matched { color: #7c3aed; font-weight: 700; }
   </style>
 </head>
 <body>
@@ -84,6 +118,127 @@
     };
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Google Places Autocomplete loader
+    // ─────────────────────────────────────────────────────────────────────────
+    let googlePlacesLoaded = false;
+    let googlePlacesLoadPromise = null;
+
+    function loadGooglePlaces() {
+      if (googlePlacesLoaded) return Promise.resolve();
+      if (googlePlacesLoadPromise) return googlePlacesLoadPromise;
+
+      googlePlacesLoadPromise = fetch('/api/config')
+        .then(r => r.json())
+        .then(config => {
+          const key = config.googlePlacesApiKey;
+          if (!key) {
+            console.warn('[Places] No Google Places API key configured');
+            return;
+          }
+          return new Promise((resolve, reject) => {
+            const script = document.createElement('script');
+            script.src = `https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places`;
+            script.async = true;
+            script.onload = () => { googlePlacesLoaded = true; resolve(); };
+            script.onerror = () => reject(new Error('Failed to load Google Places'));
+            document.head.appendChild(script);
+          });
+        });
+      return googlePlacesLoadPromise;
+    }
+
+    // Reverse-lookup for state abbreviation → full name
+    const STATE_NAMES = Object.fromEntries(
+      Object.entries(STATE_CODES).map(([name, code]) => [code, name])
+    );
+
+    // Parse a Google Place result into address components
+    function parsePlaceResult(place) {
+      const components = {};
+      (place.address_components || []).forEach(c => {
+        c.types.forEach(type => { components[type] = c; });
+      });
+
+      const streetNumber = components.street_number?.long_name || '';
+      const route = components.route?.short_name || '';
+      const address1 = `${streetNumber} ${route}`.trim();
+      const subpremise = components.subpremise?.long_name || '';
+      const city = components.locality?.long_name ||
+                   components.sublocality_level_1?.long_name ||
+                   components.administrative_area_level_2?.long_name || '';
+      const stateCode = components.administrative_area_level_1?.short_name || '';
+      const stateName = STATE_NAMES[stateCode] || stateCode;
+      const postalCode = components.postal_code?.long_name || '';
+
+      return {
+        address1: address1.substring(0, 35),
+        address2: subpremise ? `#${subpremise}` : '',
+        city,
+        state: stateName,
+        postalCode
+      };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // AddressAutocomplete Component
+    // ─────────────────────────────────────────────────────────────────────────
+    function AddressAutocomplete({ value, onChange, onPlaceSelected }) {
+      const inputRef = React.useRef(null);
+      const autocompleteRef = React.useRef(null);
+      const [placesAvailable, setPlacesAvailable] = React.useState(false);
+
+      React.useEffect(() => {
+        loadGooglePlaces().then(() => {
+          if (!window.google?.maps?.places || !inputRef.current) return;
+          setPlacesAvailable(true);
+
+          const ac = new window.google.maps.places.Autocomplete(inputRef.current, {
+            types: ['address'],
+            componentRestrictions: { country: ['us', 'ca', 'gb'] },
+            fields: ['address_components', 'formatted_address']
+          });
+
+          ac.addListener('place_changed', () => {
+            const place = ac.getPlace();
+            if (!place.address_components) return;
+            const parsed = parsePlaceResult(place);
+            if (onPlaceSelected) onPlaceSelected(parsed);
+          });
+
+          autocompleteRef.current = ac;
+        }).catch(err => {
+          console.warn('[Places] Could not load:', err.message);
+        });
+
+        return () => {
+          if (autocompleteRef.current) {
+            window.google?.maps?.event?.clearInstanceListeners(autocompleteRef.current);
+          }
+        };
+      }, []);
+
+      return (
+        <TextField
+          fullWidth
+          label="Address (35 character limit)"
+          variant="outlined"
+          sx={{ mb: 2 }}
+          inputProps={{ maxLength: 35, ref: inputRef }}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placesAvailable ? 'Start typing to search...' : ''}
+          InputProps={{
+            endAdornment: placesAvailable ? (
+              <InputAdornment position="end">
+                <span className="material-icons" style={{ fontSize: 18, color: '#7c3aed', opacity: 0.6 }}>location_on</span>
+              </InputAdornment>
+            ) : null
+          }}
+        />
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // App Component
     // ─────────────────────────────────────────────────────────────────────────
     function App() {
@@ -119,12 +274,14 @@
         country: 'United States',
         firstName: '',
         lastName: '',
+        phone: '',
         address1: '',
         address2: '',
         city: '',
         state: '',
         postalCode: ''
       });
+      const [recipientPhoneError, setRecipientPhoneError] = useState('');
 
       // Dialogs & alerts
       const [checkoutLoading, setCheckoutLoading] = useState(false);
@@ -277,30 +434,27 @@
           });
           const data = await res.json();
 
-          // Check if the checkout requires escalation → open embedded checkout
-          const checkoutStatus = data.status || data.mcpResponse?.status;
-          if (checkoutStatus === 'requires_escalation' && data.checkoutUrl) {
+          if (data.success && data.checkoutUrl) {
+            // Always open embedded checkout with the continue URL
             setCartOpen(false);
             setEmbeddedCheckout({
               continueUrl: data.checkoutUrl,
               recipient: group.recipient,
               productTitle: item.title,
               productPrice: item.price,
-              quantity: item.quantity
+              quantity: item.quantity,
+              checkoutId: data.checkoutId,
+              status: data.status
             });
-            setSnackbar({ open: true, message: 'Checkout requires escalation — opening embedded checkout...', severity: 'info' });
+            setSnackbar({ open: true, message: 'Checkout created — opening embedded checkout...', severity: 'info' });
           } else {
-            // Show the response modal for inspection / direct URL
+            // No continue URL — show the raw response for debugging
             setCheckoutResponse({
               ...data,
               productTitle: item.title,
               productPrice: item.price,
               quantity: item.quantity
             });
-
-            if (data.checkoutUrl) {
-              setSnackbar({ open: true, message: 'Checkout created! Open the checkout URL from the response modal.', severity: 'success' });
-            }
           }
         } catch (err) {
           console.error('Checkout error:', err);
@@ -314,42 +468,81 @@
       };
 
       return (
-        <Box sx={{ minHeight: '100vh', bgcolor: '#f5f5f5' }}>
-          {/* App Bar */}
-          <AppBar position="sticky" sx={{ bgcolor: '#5c6bc0' }}>
-            <Toolbar>
-              <span className="material-icons" style={{ marginRight: 12 }}>card_giftcard</span>
-              <Typography variant="h6" sx={{ flexGrow: 1 }}>Gift Registry</Typography>
+        <Box sx={{ minHeight: '100vh' }}>
+          {/* App Bar — Partiful-style glassmorphism */}
+          <AppBar position="sticky" elevation={0} sx={{
+            bgcolor: 'rgba(255,255,255,0.72)',
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            borderBottom: '1px solid rgba(0,0,0,0.06)',
+            color: '#1a1a2e'
+          }}>
+            <Toolbar sx={{ py: 0.5 }}>
+              <Typography variant="h5" sx={{
+                flexGrow: 1,
+                fontFamily: "'Space Grotesk', sans-serif",
+                fontWeight: 700,
+                background: 'linear-gradient(135deg, #7c3aed, #db2777, #f59e0b)',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent'
+              }}>🎁 Gift Registry</Typography>
               {group && (
                 <Chip
-                  avatar={<Avatar>{group.lead.firstName[0]}</Avatar>}
+                  avatar={<Avatar sx={{ bgcolor: '#7c3aed !important', fontWeight: 700 }}>{group.lead.firstName[0]}</Avatar>}
                   label={`Group ${group.id}`}
-                  sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white', mr: 2 }}
+                  sx={{ bgcolor: '#f3e8ff', color: '#7c3aed', fontWeight: 600, borderRadius: 99, mr: 1 }}
                 />
               )}
-              <IconButton color="inherit" onClick={() => setCartOpen(true)}>
-                <Badge badgeContent={cartCount} color="error">
-                  <span className="material-icons">shopping_cart</span>
+              <IconButton onClick={() => setCartOpen(true)} sx={{
+                bgcolor: cartCount > 0 ? '#fef3c7' : 'transparent',
+                '&:hover': { bgcolor: '#fde68a' },
+                borderRadius: 99
+              }}>
+                <Badge badgeContent={cartCount} sx={{ '& .MuiBadge-badge': { bgcolor: '#db2777', color: 'white', fontWeight: 700 } }}>
+                  <span className="material-icons" style={{ color: '#1a1a2e' }}>shopping_bag</span>
                 </Badge>
               </IconButton>
             </Toolbar>
-            <Tabs value={tab} onChange={(e, v) => setTab(v)} textColor="inherit" indicatorColor="secondary" centered>
-              <Tab label="Group" icon={<span className="material-icons">group_add</span>} />
-              <Tab label="Members" icon={<span className="material-icons">people</span>} disabled={!group} />
-              <Tab label="Products" icon={<span className="material-icons">shopping_bag</span>} />
-            </Tabs>
+            <Box sx={{ display: 'flex', justifyContent: 'center', pb: 1.5, gap: 1 }}>
+              {[{ label: '👥 Group', idx: 0, disabled: false },
+                { label: '🎉 Members', idx: 1, disabled: !group },
+                { label: '🛍️ Gifts', idx: 2, disabled: false }].map(t => (
+                <Button key={t.idx}
+                  disabled={t.disabled}
+                  onClick={() => setTab(t.idx)}
+                  sx={{
+                    borderRadius: 99, px: 2.5, py: 0.8,
+                    fontFamily: "'DM Sans', sans-serif",
+                    fontWeight: 600, fontSize: '0.9rem',
+                    textTransform: 'none',
+                    bgcolor: tab === t.idx ? '#7c3aed' : 'rgba(124,58,237,0.08)',
+                    color: tab === t.idx ? 'white' : '#7c3aed',
+                    '&:hover': { bgcolor: tab === t.idx ? '#6d28d9' : 'rgba(124,58,237,0.15)' },
+                    '&.Mui-disabled': { opacity: 0.4 },
+                    transition: 'all 0.2s ease'
+                  }}
+                >{t.label}</Button>
+              ))}
+            </Box>
           </AppBar>
 
-          <Container maxWidth="lg" sx={{ py: 3 }}>
+          <Container maxWidth="lg" sx={{ py: 4 }}>
             {/* Tab 0: Create Group */}
             {tab === 0 && (
-              <Paper sx={{ p: 3, maxWidth: 500, mx: 'auto' }}>
-                <Typography variant="h5" gutterBottom>
-                  <span className="material-icons" style={{ verticalAlign: 'middle', marginRight: 8 }}>person</span>
-                  Group Lead
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                  You'll coordinate the group gift purchase. Order confirmations will be sent to your email.
+              <Paper sx={{
+                p: 4, maxWidth: 480, mx: 'auto',
+                borderRadius: 5,
+                border: '1px solid rgba(124,58,237,0.1)',
+                boxShadow: '0 8px 32px rgba(124,58,237,0.08)',
+                bgcolor: 'rgba(255,255,255,0.85)',
+                backdropFilter: 'blur(10px)'
+              }}>
+                <Typography variant="h4" sx={{
+                  fontFamily: "'Space Grotesk', sans-serif",
+                  fontWeight: 700, mb: 0.5, textAlign: 'center'
+                }}>👋 Hey there!</Typography>
+                <Typography variant="body1" color="text.secondary" sx={{ mb: 3, textAlign: 'center', lineHeight: 1.6 }}>
+                  You're organizing a group gift. Let's start with your info — order confirmations go to your email.
                 </Typography>
                 <TextField
                   fullWidth label="First Name" variant="outlined" sx={{ mb: 2 }}
@@ -393,11 +586,21 @@
                   variant="contained" size="large" fullWidth
                   onClick={createGroup}
                   disabled={!leadForm.firstName || !leadForm.lastName || !leadForm.email || !!leadPhoneError}
+                  sx={{
+                    borderRadius: 99, py: 1.5,
+                    fontFamily: "'Space Grotesk', sans-serif",
+                    fontWeight: 700, fontSize: '1rem',
+                    textTransform: 'none',
+                    background: 'linear-gradient(135deg, #7c3aed, #db2777)',
+                    boxShadow: '0 4px 16px rgba(124,58,237,0.3)',
+                    '&:hover': { boxShadow: '0 6px 24px rgba(124,58,237,0.4)', transform: 'translateY(-1px)' },
+                    transition: 'all 0.2s ease'
+                  }}
                 >
-                  Create Group
+                  Let's Go! 🎉
                 </Button>
                 {group && (
-                  <Alert severity="success" sx={{ mt: 2 }}>
+                  <Alert severity="success" sx={{ mt: 2, borderRadius: 3, bgcolor: '#f0fdf4' }}>
                     Group #{group.id} created! Add members and set a recipient.
                   </Alert>
                 )}
@@ -408,10 +611,18 @@
             {tab === 1 && group && (
               <Grid container spacing={3}>
                 <Grid item xs={12} md={6}>
-                  <Paper sx={{ p: 3 }}>
-                    <Typography variant="h6" gutterBottom>
-                      <span className="material-icons" style={{ verticalAlign: 'middle', marginRight: 8 }}>person_add</span>
-                      Invite Members
+                  <Paper sx={{
+                    p: 3, borderRadius: 5,
+                    border: '1px solid rgba(124,58,237,0.1)',
+                    boxShadow: '0 8px 32px rgba(124,58,237,0.08)',
+                    bgcolor: 'rgba(255,255,255,0.85)',
+                    backdropFilter: 'blur(10px)'
+                  }}>
+                    <Typography variant="h6" gutterBottom sx={{
+                      fontFamily: "'Space Grotesk', sans-serif",
+                      fontWeight: 700
+                    }}>
+                      🎉 Invite Members
                     </Typography>
                     <TextField
                       fullWidth label="First Name" size="small" sx={{ mb: 1 }}
@@ -450,8 +661,9 @@
                         )
                       }}
                     />
-                    <Button variant="outlined" onClick={addMember} disabled={!memberForm.email || !!phoneError}>
-                      Add Member
+                    <Button variant="outlined" onClick={addMember} disabled={!memberForm.email || !!phoneError}
+                      sx={{ borderRadius: 99, textTransform: 'none', fontWeight: 600, borderColor: '#7c3aed', color: '#7c3aed', '&:hover': { borderColor: '#6d28d9', bgcolor: '#f3e8ff' } }}>
+                      Add Member ✨
                     </Button>
 
                     {group.members.length > 0 && (
@@ -459,7 +671,7 @@
                         {group.members.map((m, i) => (
                           <ListItem key={i}>
                             <ListItemAvatar>
-                              <Avatar sx={{ bgcolor: m.isLead ? '#ff9800' : '#5c6bc0' }}>
+                              <Avatar sx={{ bgcolor: m.isLead ? '#f59e0b' : '#7c3aed', fontWeight: 700 }}>
                                 {m.isLead ? <span className="material-icons" style={{ fontSize: 20 }}>star</span> : (m.firstName || m.email)[0].toUpperCase()}
                               </Avatar>
                             </ListItemAvatar>
@@ -480,12 +692,21 @@
                 </Grid>
 
                 <Grid item xs={12} md={6}>
-                  <Paper sx={{ p: 3 }}>
-                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>
-                      Gift Recipient
+                  <Paper sx={{
+                    p: 3, borderRadius: 5,
+                    border: '1px solid rgba(219,39,119,0.1)',
+                    boxShadow: '0 8px 32px rgba(219,39,119,0.08)',
+                    bgcolor: 'rgba(255,255,255,0.85)',
+                    backdropFilter: 'blur(10px)'
+                  }}>
+                    <Typography variant="h6" gutterBottom sx={{
+                      fontFamily: "'Space Grotesk', sans-serif",
+                      fontWeight: 700
+                    }}>
+                      🎀 Gift Recipient
                     </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      The gift will be shipped here. The recipient won't receive order emails.
+                    <Typography variant="body1" color="text.secondary" sx={{ mb: 2, lineHeight: 1.6 }}>
+                      The gift ships here. The recipient won't get any order emails — it stays a surprise! 🤫
                     </Typography>
 
                     <FormControl fullWidth sx={{ mb: 2 }}>
@@ -520,12 +741,41 @@
 
                     <TextField
                       fullWidth
-                      label="Address (35 character limit)"
+                      label="Phone Number"
                       variant="outlined"
                       sx={{ mb: 2 }}
-                      inputProps={{ maxLength: 35 }}
+                      value={recipientForm.phone}
+                      error={!!recipientPhoneError}
+                      helperText={recipientPhoneError || 'Required for delivery notifications'}
+                      onChange={(e) => {
+                        const formatted = formatPhoneNumber(e.target.value);
+                        setRecipientForm({ ...recipientForm, phone: formatted });
+                        if (formatted && formatted.replace(/\D/g, '').length >= 10) setRecipientPhoneError('');
+                      }}
+                      onBlur={() => {
+                        if (recipientForm.phone) {
+                          const err = validatePhone(recipientForm.phone);
+                          setRecipientPhoneError(err || '');
+                        }
+                      }}
+                      InputProps={{
+                        startAdornment: <InputAdornment position="start"><span className="material-icons" style={{ fontSize: 20 }}>phone</span></InputAdornment>
+                      }}
+                    />
+
+                    <AddressAutocomplete
                       value={recipientForm.address1}
-                      onChange={(e) => setRecipientForm({ ...recipientForm, address1: e.target.value })}
+                      onChange={(val) => setRecipientForm({ ...recipientForm, address1: val })}
+                      onPlaceSelected={(place) => {
+                        setRecipientForm(prev => ({
+                          ...prev,
+                          address1: place.address1 || prev.address1,
+                          address2: place.address2 || prev.address2,
+                          city: place.city || prev.city,
+                          state: place.state || prev.state,
+                          postalCode: place.postalCode || prev.postalCode
+                        }));
+                      }}
                     />
 
                     <TextField
@@ -574,10 +824,19 @@
                       fullWidth
                       size="large"
                       onClick={setRecipient}
-                      disabled={!recipientForm.firstName || !recipientForm.address1 || !recipientForm.city || !recipientForm.state}
-                      sx={{ bgcolor: '#000', '&:hover': { bgcolor: '#333' } }}
+                      disabled={!recipientForm.firstName || !recipientForm.phone || !recipientForm.address1 || !recipientForm.city || !recipientForm.state}
+                      sx={{
+                        borderRadius: 99, py: 1.5,
+                        fontFamily: "'Space Grotesk', sans-serif",
+                        fontWeight: 700, fontSize: '1rem',
+                        textTransform: 'none',
+                        background: 'linear-gradient(135deg, #db2777, #7c3aed)',
+                        boxShadow: '0 4px 16px rgba(219,39,119,0.3)',
+                        '&:hover': { boxShadow: '0 6px 24px rgba(219,39,119,0.4)', transform: 'translateY(-1px)' },
+                        transition: 'all 0.2s ease'
+                      }}
                     >
-                      Save & Browse Gifts
+                      Save & Browse Gifts 🛍️
                     </Button>
 
                     {group.recipient && (
@@ -593,16 +852,25 @@
             {/* Tab 2: Products Grid */}
             {tab === 2 && (
               <Box>
-                <Paper sx={{ p: 2, mb: 3 }}>
+                <Paper sx={{
+                  p: 2, mb: 3, borderRadius: 99,
+                  border: '1px solid rgba(124,58,237,0.1)',
+                  boxShadow: '0 4px 20px rgba(124,58,237,0.06)',
+                  bgcolor: 'rgba(255,255,255,0.9)',
+                  display: 'flex', alignItems: 'center', gap: 1
+                }}>
                   <TextField
                     fullWidth
-                    placeholder="Search gifts..."
+                    placeholder="Search for the perfect gift... 🔍"
                     value={search}
                     onChange={handleSearch}
+                    variant="standard"
                     InputProps={{
+                      disableUnderline: true,
+                      sx: { px: 1, fontFamily: "'DM Sans', sans-serif", fontSize: '1rem' },
                       startAdornment: (
                         <InputAdornment position="start">
-                          <span className="material-icons">search</span>
+                          <span className="material-icons" style={{ color: '#7c3aed' }}>search</span>
                         </InputAdornment>
                       )
                     }}
@@ -610,9 +878,12 @@
                   {source && (
                     <Chip
                       size="small"
-                      label={source === 'shopify_catalog_api' ? 'Shopify Catalog API' : 'Mock Data'}
-                      color={source === 'shopify_catalog_api' ? 'success' : 'default'}
-                      sx={{ mt: 1 }}
+                      label={source === 'shopify_catalog_api' ? '✨ Live Catalog' : 'Mock'}
+                      sx={{
+                        bgcolor: source === 'shopify_catalog_api' ? '#f0fdf4' : '#f5f5f5',
+                        color: source === 'shopify_catalog_api' ? '#16a34a' : '#888',
+                        fontWeight: 600, borderRadius: 99
+                      }}
                     />
                   )}
                 </Paper>
@@ -625,30 +896,47 @@
                   <Grid container spacing={3}>
                     {products.map((product) => (
                       <Grid item xs={6} sm={4} md={3} key={product.id}>
-                        <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', transition: '0.2s', '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 } }}>
+                        <Card sx={{
+                          height: '100%', display: 'flex', flexDirection: 'column',
+                          borderRadius: 4,
+                          border: '1px solid rgba(0,0,0,0.06)',
+                          boxShadow: '0 4px 20px rgba(0,0,0,0.04)',
+                          bgcolor: 'rgba(255,255,255,0.9)',
+                          transition: 'all 0.25s ease',
+                          overflow: 'hidden',
+                          '&:hover': { transform: 'translateY(-6px) scale(1.01)', boxShadow: '0 12px 40px rgba(124,58,237,0.12)' }
+                        }}>
                           <CardMedia
                             component="img"
-                            height="160"
+                            height="180"
                             image={product.image || 'https://via.placeholder.com/300x200?text=No+Image'}
                             alt={product.title}
-                            sx={{ objectFit: 'cover', bgcolor: '#eee' }}
+                            sx={{ objectFit: 'cover', bgcolor: '#faf5ff' }}
                           />
                           <CardContent sx={{ flexGrow: 1, pb: 1 }}>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 500, lineHeight: 1.3, mb: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                            <Typography variant="subtitle2" sx={{
+                              fontFamily: "'DM Sans', sans-serif",
+                              fontWeight: 600, lineHeight: 1.3, mb: 0.5,
+                              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'
+                            }}>
                               {product.title}
                             </Typography>
                             {product.merchant && (
-                              <Typography variant="caption" color="text.secondary" display="block">
+                              <Typography variant="caption" color="text.secondary" display="block" sx={{ fontWeight: 500 }}>
                                 {product.merchant}
                               </Typography>
                             )}
                             {product.rating && (
                               <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
-                                <Rating value={product.rating} precision={0.1} size="small" readOnly />
+                                <Rating value={product.rating} precision={0.1} size="small" readOnly
+                                  sx={{ '& .MuiRating-iconFilled': { color: '#f59e0b' } }} />
                                 <Typography variant="caption" sx={{ ml: 0.5 }}>({product.reviewCount})</Typography>
                               </Box>
                             )}
-                            <Typography variant="h6" color="primary" sx={{ mt: 1 }}>
+                            <Typography variant="h6" sx={{
+                              mt: 1, fontFamily: "'Space Grotesk', sans-serif",
+                              fontWeight: 700, color: '#7c3aed'
+                            }}>
                               {product.price ? `$${product.price}` : ''}
                             </Typography>
                           </CardContent>
@@ -658,9 +946,16 @@
                               size="small"
                               fullWidth
                               onClick={() => addToCart(product)}
-                              startIcon={<span className="material-icons" style={{ fontSize: 18 }}>add_shopping_cart</span>}
+                              sx={{
+                                borderRadius: 99, textTransform: 'none',
+                                fontWeight: 700, fontSize: '0.85rem',
+                                background: 'linear-gradient(135deg, #7c3aed, #db2777)',
+                                boxShadow: '0 2px 8px rgba(124,58,237,0.25)',
+                                '&:hover': { boxShadow: '0 4px 16px rgba(124,58,237,0.35)' },
+                                transition: 'all 0.2s ease'
+                              }}
                             >
-                              Gift This
+                              🎁 Gift This
                             </Button>
                           </CardActions>
                         </Card>
@@ -670,9 +965,10 @@
                 )}
 
                 {!loading && products.length === 0 && (
-                  <Paper sx={{ p: 4, textAlign: 'center' }}>
-                    <span className="material-icons" style={{ fontSize: 48, color: '#ccc' }}>search_off</span>
-                    <Typography color="text.secondary">No products found</Typography>
+                  <Paper sx={{ p: 5, textAlign: 'center', borderRadius: 5, bgcolor: 'rgba(255,255,255,0.8)' }}>
+                    <Typography sx={{ fontSize: 48, mb: 1 }}>🔍</Typography>
+                    <Typography variant="h6" sx={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, mb: 0.5 }}>No gifts found</Typography>
+                    <Typography color="text.secondary">Try a different search term</Typography>
                   </Paper>
                 )}
               </Box>
@@ -685,19 +981,25 @@
             onClose={() => setCartOpen(false)}
             maxWidth="md"
             fullWidth
-            PaperProps={{ sx: { maxHeight: '90vh' } }}
+            PaperProps={{ sx: { maxHeight: '90vh', borderRadius: 5, overflow: 'hidden' } }}
           >
-            <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee' }}>
-              <Typography variant="h5" sx={{ fontWeight: 600 }}>SHOPPING BAG</Typography>
-              <Typography variant="body1" color="text.secondary">{cartCount} ITEMS</Typography>
+            <DialogTitle sx={{
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+              background: 'linear-gradient(135deg, #7c3aed, #db2777)',
+              color: 'white', py: 2.5
+            }}>
+              <Typography variant="h5" sx={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>🛍️ Gift Bag</Typography>
+              <Chip label={`${cartCount} items`} sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white', fontWeight: 700, borderRadius: 99 }} />
             </DialogTitle>
             <DialogContent sx={{ p: 0 }}>
               {cart.length === 0 ? (
-                <Box sx={{ p: 4, textAlign: 'center' }}>
-                  <span className="material-icons" style={{ fontSize: 64, color: '#ccc' }}>shopping_bag</span>
-                  <Typography color="text.secondary" sx={{ mt: 2 }}>Your bag is empty</Typography>
-                  <Button variant="outlined" sx={{ mt: 2 }} onClick={() => { setCartOpen(false); setTab(2); }}>
-                    Browse Gifts
+                <Box sx={{ p: 5, textAlign: 'center' }}>
+                  <Typography sx={{ fontSize: 56, mb: 1 }}>🛍️</Typography>
+                  <Typography variant="h6" sx={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 600, mb: 0.5 }}>Nothing here yet!</Typography>
+                  <Typography color="text.secondary" sx={{ mb: 3 }}>Find something special for your person</Typography>
+                  <Button variant="contained" onClick={() => { setCartOpen(false); setTab(2); }}
+                    sx={{ borderRadius: 99, textTransform: 'none', fontWeight: 700, background: 'linear-gradient(135deg, #7c3aed, #db2777)', px: 4 }}>
+                    Browse Gifts 🎁
                   </Button>
                 </Box>
               ) : (
@@ -759,10 +1061,17 @@
                               variant="contained"
                               size="small"
                               disabled={checkoutLoading || !item.variantId}
-                              sx={{ mt: 2, bgcolor: '#000', '&:hover': { bgcolor: '#333' }, textTransform: 'uppercase', fontWeight: 600 }}
+                              sx={{
+                                mt: 2, borderRadius: 99,
+                                textTransform: 'none', fontWeight: 700,
+                                background: 'linear-gradient(135deg, #7c3aed, #db2777)',
+                                boxShadow: '0 2px 8px rgba(124,58,237,0.25)',
+                                '&:hover': { boxShadow: '0 4px 16px rgba(124,58,237,0.35)' },
+                                px: 2.5
+                              }}
                               onClick={() => checkoutItem(item)}
                             >
-                              {checkoutLoading ? <CircularProgress size={20} color="inherit" /> : 'Checkout'}
+                              {checkoutLoading ? <CircularProgress size={20} color="inherit" /> : 'Checkout 💫'}
                             </Button>
                             {!item.variantId && (
                               <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
@@ -779,8 +1088,11 @@
                   {/* Order Summary */}
                   <Grid item xs={12} md={4}>
                     <Box sx={{ p: 3 }}>
-                      <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, textTransform: 'uppercase' }}>
-                        Order Summary
+                      <Typography variant="h6" sx={{
+                        fontFamily: "'Space Grotesk', sans-serif",
+                        fontWeight: 700, mb: 2
+                      }}>
+                        ✨ Order Summary
                       </Typography>
 
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
@@ -828,8 +1140,12 @@
             maxWidth="md"
             fullWidth
           >
-            <DialogTitle sx={{ bgcolor: checkoutResponse?.success ? '#4caf50' : '#f44336', color: 'white', display: 'flex', alignItems: 'center', gap: 1 }}>
-              <span className="material-icons">{checkoutResponse?.success ? 'check_circle' : 'error'}</span>
+            <DialogTitle sx={{
+              background: checkoutResponse?.success ? 'linear-gradient(135deg, #16a34a, #059669)' : 'linear-gradient(135deg, #ef4444, #db2777)',
+              color: 'white', display: 'flex', alignItems: 'center', gap: 1,
+              fontFamily: "'Space Grotesk', sans-serif"
+            }}>
+              {checkoutResponse?.success ? '✅' : '❌'}
               MCP create_checkout {checkoutResponse?.success ? 'Response' : 'Error'}
             </DialogTitle>
             <DialogContent sx={{ mt: 2 }}>
@@ -931,15 +1247,21 @@
             maxWidth="sm"
             fullWidth
           >
-            <DialogTitle sx={{ bgcolor: '#4caf50', color: 'white', display: 'flex', alignItems: 'center', gap: 1 }}>
-              <span className="material-icons">celebration</span>
-              Order Confirmed!
+            <DialogTitle sx={{
+              background: 'linear-gradient(135deg, #7c3aed, #db2777, #f59e0b)',
+              color: 'white', display: 'flex', alignItems: 'center', gap: 1,
+              fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700
+            }}>
+              🎉 Order Confirmed!
             </DialogTitle>
             <DialogContent sx={{ mt: 2 }}>
               {orderConfirmation && (
-                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 3 }}>
-                  <span className="material-icons" style={{ fontSize: 72, color: '#4caf50' }}>check_circle</span>
-                  <Typography variant="h5" sx={{ fontWeight: 600, textAlign: 'center' }}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 4 }}>
+                  <Typography sx={{ fontSize: 72 }}>🎁</Typography>
+                  <Typography variant="h4" sx={{
+                    fontFamily: "'Space Grotesk', sans-serif",
+                    fontWeight: 700, textAlign: 'center'
+                  }}>
                     The gift is on its way!
                   </Typography>
                   {orderConfirmation?.checkout?.order?.id && (
@@ -959,7 +1281,10 @@
               )}
             </DialogContent>
             <DialogActions>
-              <Button variant="contained" onClick={() => setOrderConfirmation(null)}>Done</Button>
+              <Button variant="contained" onClick={() => setOrderConfirmation(null)}
+                sx={{ borderRadius: 99, textTransform: 'none', fontWeight: 700, background: 'linear-gradient(135deg, #7c3aed, #db2777)', px: 4 }}>
+                Done 🎉
+              </Button>
             </DialogActions>
           </Dialog>
 
@@ -979,22 +1304,40 @@
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // EmbeddedCheckout Component — ECP iframe bridge
-    // Handles: ec.ready, ec.start, ec.fulfillment.address_change_request,
-    //          ec.complete, plus error responses for cancelled actions.
+    // EmbeddedCheckout Component — ECP popup bridge
+    //
+    // Shopify's checkout CSP (frame-ancestors) blocks iframing from
+    // third-party origins.  Popup windows are NOT subject to frame-ancestors,
+    // so we open checkout in a popup and communicate via postMessage.
+    //
+    // JSON-RPC 2.0 protocol:
+    //   Messages with `id` = Requests → MUST respond
+    //   Messages without `id` = Notifications → no response
+    //
+    // Event flow:
+    //   1. Checkout loads in popup
+    //   2. Checkout sends ec.ready  (Request)  → we respond { id, result:{} }
+    //   3. Checkout sends ec.start  (Notification)
+    //   4. Checkout may send ec.fulfillment.address_change_request (Request)
+    //   5. Checkout sends ec.complete (Notification) when done
     // ─────────────────────────────────────────────────────────────────────────
     function EmbeddedCheckout({ continueUrl, recipient, productTitle, onComplete, onClose }) {
-      const iframeRef = React.useRef(null);
-      const [ecpStatus, setEcpStatus] = React.useState('loading'); // loading | connecting | ready | active | complete | error
+      const checkoutWindowRef = React.useRef(null);
+      const completedRef = React.useRef(false);
+      const [ecpStatus, setEcpStatus] = React.useState('loading');
       const [embeddedUrl, setEmbeddedUrl] = React.useState(null);
       const [ecpError, setEcpError] = React.useState(null);
       const [addressRequested, setAddressRequested] = React.useState(false);
       const [showRecipientEdit, setShowRecipientEdit] = React.useState(false);
       const [editRecipient, setEditRecipient] = React.useState(null);
       const pendingAddressRequestId = React.useRef(null);
+      const acceptedDelegations = React.useRef([]);
+      const checkoutOriginRef = React.useRef('*');
 
-      // Build the embedded URL on mount
+      // Build the ECP-enriched URL on mount, then open popup
       React.useEffect(() => {
+        let pollTimer;
+
         fetch('/api/embedded-checkout-url', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1002,62 +1345,170 @@
         })
           .then(r => r.json())
           .then(data => {
-            if (data.embedded_url) {
-              setEmbeddedUrl(data.embedded_url);
-              setEcpStatus('connecting');
-            } else {
+            if (!data.embedded_url) {
               setEcpError(data.error || 'Failed to build embedded checkout URL');
               setEcpStatus('error');
+              return;
             }
+
+            console.log('[ECP] 🔗 Embedded checkout URL:', data.embedded_url);
+            setEmbeddedUrl(data.embedded_url);
+            setEcpStatus('connecting');
+
+            // Open checkout in a popup (bypasses frame-ancestors CSP)
+            const w = 480, h = 720;
+            const left = (window.screen.width - w) / 2;
+            const top = (window.screen.height - h) / 2;
+            checkoutWindowRef.current = window.open(
+              data.embedded_url,
+              'shopify_checkout',
+              `width=${w},height=${h},left=${left},top=${top},toolbar=no,menubar=no,scrollbars=yes,resizable=yes`
+            );
+
+            if (!checkoutWindowRef.current) {
+              setEcpError('Popup blocked — please allow popups for this site');
+              setEcpStatus('error');
+              return;
+            }
+
+            console.log('[ECP] 📤 Popup opened, waiting for ec.ready...');
+
+            // Poll for popup being closed manually
+            pollTimer = setInterval(() => {
+              if (checkoutWindowRef.current && checkoutWindowRef.current.closed) {
+                clearInterval(pollTimer);
+                if (!completedRef.current) {
+                  onClose();
+                }
+              }
+            }, 500);
           })
           .catch(err => {
             setEcpError(err.message);
             setEcpStatus('error');
           });
+
+        return () => {
+          if (pollTimer) clearInterval(pollTimer);
+          if (checkoutWindowRef.current && !checkoutWindowRef.current.closed) {
+            checkoutWindowRef.current.close();
+          }
+        };
       }, [continueUrl]);
 
-      // Listen for ECP postMessage events from the checkout iframe
+      // ── ECP postMessage listener ───────────────────────────────────────
       React.useEffect(() => {
         function handleMessage(event) {
+          // Log ALL postMessage events for debugging (truncate large data)
+          const preview = typeof event.data === 'string'
+            ? event.data.slice(0, 300)
+            : JSON.stringify(event.data).slice(0, 300);
+          console.log('[ECP] 📩 postMessage from', event.origin, ':', preview);
+
           let msg;
           try {
             msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
-          } catch { return; }
+          } catch {
+            console.log('[ECP] ⚠️ Non-JSON message ignored');
+            return;
+          }
 
-          // Only process JSON-RPC messages with a method starting with "ec."
-          if (!msg || !msg.method || !msg.method.startsWith('ec.')) return;
+          // Handle JSON-RPC 2.0 messages with ec.* methods
+          if (!msg || msg.jsonrpc !== '2.0' || !msg.method) {
+            console.log('[ECP] ⚠️ Not a JSON-RPC request/notification, ignoring:', msg);
+            return;
+          }
+          if (!msg.method.startsWith('ec.')) {
+            console.log('[ECP] ⚠️ Non-ec.* method ignored:', msg.method);
+            return;
+          }
 
-          console.log('[ECP] Received:', msg.method, msg);
+          console.log('[ECP] ← Received:', msg.method, JSON.stringify(msg, null, 2));
+
+          // Store the checkout origin for validated responses
+          if (event.origin && event.origin !== 'null') {
+            checkoutOriginRef.current = event.origin;
+          }
 
           switch (msg.method) {
-            case 'ec.ready':
+            // ── ec.ready (Request — MUST respond) ────────────────────────
+            // This initializes the ECP channel. We echo back the request id.
+            case 'ec.ready': {
+              const delegations = msg.params?.delegate || [];
+              acceptedDelegations.current = delegations;
+              console.log('[ECP] Delegations accepted:', delegations);
+              console.log('[ECP] Checkout origin:', checkoutOriginRef.current);
               setEcpStatus('ready');
-              // Respond to ec.ready — confirm we're here, no payment instruments to declare
               respondToCheckout(msg.id, {});
               break;
+            }
 
+            // ── ec.start (Notification — no response) ────────────────────
             case 'ec.start':
               setEcpStatus('active');
-              // ec.start is a notification, no response needed
+              console.log('[ECP] Checkout visible and interactive:', msg.params);
               break;
 
+            // ── ec.fulfillment.address_change_request (Request) ──────────
             case 'ec.fulfillment.address_change_request':
               handleAddressChangeRequest(msg.id, msg.params);
               break;
 
+            // ── ec.payment.instruments_change_request (Request) ──────────
+            case 'ec.payment.instruments_change_request':
+              console.log('[ECP] Payment instruments change requested:', msg.params);
+              respondWithError(msg.id, 'Payment instrument selection not delegated.');
+              break;
+
+            // ── ec.payment.credential_request (Request) ──────────────────
+            case 'ec.payment.credential_request':
+              console.log('[ECP] Payment credential requested:', msg.params);
+              respondWithError(msg.id, 'Payment credential not delegated.');
+              break;
+
+            // ── ec.payment.change (Notification) ─────────────────────────
             case 'ec.payment.change':
-              // Notification only — payment method changed in checkout UI
               console.log('[ECP] Payment changed:', msg.params);
               break;
 
+            // ── ec.fulfillment.change (Notification) ─────────────────────
+            case 'ec.fulfillment.change':
+              console.log('[ECP] Fulfillment changed:', msg.params);
+              break;
+
+            // ── ec.messages.change (Notification — checkout errors/info) ─
+            case 'ec.messages.change':
+              console.log('[ECP] ⚠️ Messages changed:', JSON.stringify(msg.params, null, 2));
+              if (msg.params?.checkout?.messages) {
+                msg.params.checkout.messages.forEach(m => {
+                  console.log(`[ECP]   ${m.severity || m.type}: ${m.content || m.code}`);
+                });
+              }
+              break;
+
+            // ── ec.line_items.change (Notification) ──────────────────────
+            case 'ec.line_items.change':
+              console.log('[ECP] Line items changed:', msg.params);
+              break;
+
+            // ── ec.buyer.change (Notification) ───────────────────────────
+            case 'ec.buyer.change':
+              console.log('[ECP] Buyer changed:', msg.params);
+              break;
+
+            // ── ec.complete (Notification — no response) ─────────────────
             case 'ec.complete':
               setEcpStatus('complete');
-              console.log('[ECP] Checkout complete:', msg.params);
+              completedRef.current = true;
+              console.log('[ECP] ✅ Checkout complete:', msg.params);
+              if (checkoutWindowRef.current && !checkoutWindowRef.current.closed) {
+                checkoutWindowRef.current.close();
+              }
               if (onComplete) onComplete(msg.params);
               break;
 
             default:
-              console.log('[ECP] Unhandled event:', msg.method);
+              console.log('[ECP] Unhandled event:', msg.method, msg);
           }
         }
 
@@ -1065,38 +1516,43 @@
         return () => window.removeEventListener('message', handleMessage);
       }, [recipient, onComplete]);
 
-      // Send a JSON-RPC response back to the checkout iframe
+      // ── Send JSON-RPC 2.0 response to checkout popup ──────────────────
+      // The ECP spec for web hosts uses postMessage between windows.
+      // We send as a JSON string (per ECP spec) AND as a structured object
+      // (per standard web postMessage), to cover both possible Shopify
+      // implementations. The targetOrigin is the checkout's validated origin.
       function respondToCheckout(id, result) {
-        const iframe = iframeRef.current;
-        if (!iframe || !iframe.contentWindow) return;
+        const win = checkoutWindowRef.current;
+        if (!win || win.closed) {
+          console.warn('[ECP] Cannot respond — popup closed');
+          return;
+        }
+        const origin = checkoutOriginRef.current || '*';
         const response = { jsonrpc: '2.0', id, result };
-        console.log('[ECP] Responding:', response);
-        iframe.contentWindow.postMessage(JSON.stringify(response), '*');
+        console.log('[ECP] → Responding to', origin, ':', JSON.stringify(response));
+        // Send as JSON string (ECP native spec format)
+        win.postMessage(JSON.stringify(response), origin);
+        // Also send as structured object (standard web postMessage format)
+        win.postMessage(response, origin);
       }
 
-      // Send a JSON-RPC error response (e.g. user cancelled)
+      // ── Send JSON-RPC 2.0 error response ──────────────────────────────
       function respondWithError(id, message) {
-        const iframe = iframeRef.current;
-        if (!iframe || !iframe.contentWindow) return;
-        const response = {
-          jsonrpc: '2.0',
-          id,
-          error: { code: 'abort_error', message }
-        };
-        console.log('[ECP] Error response:', response);
-        iframe.contentWindow.postMessage(JSON.stringify(response), '*');
+        const win = checkoutWindowRef.current;
+        if (!win || win.closed) return;
+        const origin = checkoutOriginRef.current || '*';
+        const response = { jsonrpc: '2.0', id, error: { code: 'abort_error', message } };
+        console.log('[ECP] → Error response to', origin, ':', JSON.stringify(response));
+        win.postMessage(JSON.stringify(response), origin);
+        win.postMessage(response, origin);
       }
 
       // Handle ec.fulfillment.address_change_request
-      // If we have a valid recipient, auto-respond. Otherwise show the edit form.
       function handleAddressChangeRequest(id, params) {
         setAddressRequested(true);
-
         if (recipient && recipient.firstName && recipient.address1) {
-          // Auto-respond with the gift recipient's address
           respondWithRecipientAddress(id, recipient);
         } else {
-          // No recipient yet — show inline form and hold the request
           pendingAddressRequestId.current = id;
           setEditRecipient({
             firstName: recipient?.firstName || '',
@@ -1112,49 +1568,39 @@
         }
       }
 
-      // Respond with a formatted recipient address
       function respondWithRecipientAddress(id, addr) {
         respondToCheckout(id, {
           checkout: {
             fulfillment: {
-              methods: [
-                {
-                  type: 'shipping',
-                  selected_destination_id: 'gift-recipient-address',
-                  destinations: [
-                    {
-                      id: 'gift-recipient-address',
-                      first_name: addr.firstName,
-                      last_name: addr.lastName,
-                      street_address: addr.address1,
-                      address_locality: addr.city,
-                      address_region: addr.provinceCode || STATE_CODES[addr.state] || addr.state,
-                      postal_code: addr.postalCode,
-                      address_country: addr.country === 'United States' ? 'US' :
-                                       addr.country === 'Canada' ? 'CA' : 'US'
-                    }
-                  ]
-                }
-              ]
+              methods: [{
+                type: 'shipping',
+                selected_destination_id: 'gift-recipient-address',
+                destinations: [{
+                  id: 'gift-recipient-address',
+                  first_name: addr.firstName,
+                  last_name: addr.lastName,
+                  street_address: addr.address1,
+                  address_locality: addr.city,
+                  address_region: addr.provinceCode || STATE_CODES[addr.state] || addr.state,
+                  postal_code: addr.postalCode,
+                  address_country: addr.country === 'United States' ? 'US' :
+                                   addr.country === 'Canada' ? 'CA' : 'US'
+                }]
+              }]
             }
           }
         });
         console.log('[ECP] Sent recipient address for', addr.firstName, addr.lastName);
       }
 
-      // Submit the edited recipient address
       function submitEditedAddress() {
         if (!editRecipient || !pendingAddressRequestId.current) return;
-        const addr = {
-          ...editRecipient,
-          provinceCode: STATE_CODES[editRecipient.state] || editRecipient.state
-        };
+        const addr = { ...editRecipient, provinceCode: STATE_CODES[editRecipient.state] || editRecipient.state };
         respondWithRecipientAddress(pendingAddressRequestId.current, addr);
         pendingAddressRequestId.current = null;
         setShowRecipientEdit(false);
       }
 
-      // Cancel the address edit — send abort error
       function cancelAddressEdit() {
         if (pendingAddressRequestId.current) {
           respondWithError(pendingAddressRequestId.current, 'User cancelled address selection.');
@@ -1163,35 +1609,39 @@
         setShowRecipientEdit(false);
       }
 
+      function handleClose() {
+        if (checkoutWindowRef.current && !checkoutWindowRef.current.closed) {
+          checkoutWindowRef.current.close();
+        }
+        onClose();
+      }
+
       const statusLabels = {
         loading: 'Preparing checkout...',
-        connecting: 'Connecting to merchant...',
+        connecting: 'Opening checkout...',
         ready: 'Checkout ready',
         active: 'Checkout in progress',
         complete: 'Order complete!',
         error: 'Checkout error'
       };
 
-      const statusColors = {
-        loading: '#1976d2',
-        connecting: '#1976d2',
-        ready: '#2e7d32',
-        active: '#5c6bc0',
-        complete: '#4caf50',
-        error: '#f44336'
-      };
-
       return (
-        <Dialog open fullScreen onClose={onClose} PaperProps={{ sx: { display: 'flex', flexDirection: 'column' } }}>
+        <Dialog open onClose={handleClose} maxWidth="sm" fullWidth>
           {/* Header */}
-          <AppBar position="relative" sx={{ bgcolor: statusColors[ecpStatus] || '#5c6bc0', flexShrink: 0 }}>
+          <AppBar position="relative" elevation={0} sx={{
+            background: ecpStatus === 'complete'
+              ? 'linear-gradient(135deg, #16a34a, #059669)'
+              : ecpStatus === 'error'
+                ? 'linear-gradient(135deg, #ef4444, #db2777)'
+                : 'linear-gradient(135deg, #7c3aed, #db2777)'
+          }}>
             <Toolbar>
-              <IconButton edge="start" color="inherit" onClick={onClose}>
+              <IconButton edge="start" color="inherit" onClick={handleClose}>
                 <span className="material-icons">close</span>
               </IconButton>
               <Box sx={{ flex: 1, ml: 1 }}>
-                <Typography variant="h6">
-                  {ecpStatus === 'complete' ? 'Order Confirmed!' : `Checkout — ${productTitle || 'Gift'}`}
+                <Typography variant="h6" sx={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
+                  {ecpStatus === 'complete' ? '🎉 Order Confirmed!' : `💳 Checkout — ${productTitle || 'Gift'}`}
                 </Typography>
                 <Typography variant="caption" sx={{ opacity: 0.85 }}>
                   {statusLabels[ecpStatus]}
@@ -1204,99 +1654,148 @@
             </Toolbar>
           </AppBar>
 
-          {/* Error state */}
-          {ecpStatus === 'error' && (
-            <Box sx={{ p: 4, textAlign: 'center' }}>
-              <span className="material-icons" style={{ fontSize: 64, color: '#f44336' }}>error_outline</span>
-              <Typography variant="h6" sx={{ mt: 2, mb: 1 }}>Couldn't load checkout</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>{ecpError}</Typography>
-              <Button variant="contained" onClick={onClose}>Go Back</Button>
-            </Box>
-          )}
-
-          {/* Loading state */}
-          {ecpStatus === 'loading' && (
-            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 2 }}>
-              <CircularProgress size={48} />
-              <Typography color="text.secondary">Building embedded checkout URL...</Typography>
-            </Box>
-          )}
-
-          {/* Recipient address edit overlay (shown when checkout requests address and we need user input) */}
-          {showRecipientEdit && editRecipient && (
-            <Paper sx={{ p: 3, m: 2, position: 'relative', zIndex: 10, border: '2px solid #5c6bc0', borderRadius: 2 }}>
-              <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
-                <span className="material-icons">location_on</span>
-                Gift Recipient Address
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                The merchant's checkout is requesting a shipping address. Confirm or update the recipient's address below.
-              </Typography>
-              <Grid container spacing={2} sx={{ mb: 2 }}>
-                <Grid item xs={6}>
-                  <TextField fullWidth label="First name" size="small" value={editRecipient.firstName}
-                    onChange={(e) => setEditRecipient({ ...editRecipient, firstName: e.target.value })} />
-                </Grid>
-                <Grid item xs={6}>
-                  <TextField fullWidth label="Last name" size="small" value={editRecipient.lastName}
-                    onChange={(e) => setEditRecipient({ ...editRecipient, lastName: e.target.value })} />
-                </Grid>
-              </Grid>
-              <TextField fullWidth label="Address" size="small" sx={{ mb: 2 }} value={editRecipient.address1}
-                onChange={(e) => setEditRecipient({ ...editRecipient, address1: e.target.value })} />
-              <Grid container spacing={2} sx={{ mb: 2 }}>
-                <Grid item xs={5}>
-                  <TextField fullWidth label="City" size="small" value={editRecipient.city}
-                    onChange={(e) => setEditRecipient({ ...editRecipient, city: e.target.value })} />
-                </Grid>
-                <Grid item xs={4}>
-                  <FormControl fullWidth size="small">
-                    <InputLabel>State</InputLabel>
-                    <Select value={editRecipient.state} label="State"
-                      onChange={(e) => setEditRecipient({ ...editRecipient, state: e.target.value })}>
-                      {US_STATES.map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
-                    </Select>
-                  </FormControl>
-                </Grid>
-                <Grid item xs={3}>
-                  <TextField fullWidth label="ZIP" size="small" value={editRecipient.postalCode}
-                    onChange={(e) => setEditRecipient({ ...editRecipient, postalCode: e.target.value })} />
-                </Grid>
-              </Grid>
-              <Box sx={{ display: 'flex', gap: 2 }}>
-                <Button variant="contained" onClick={submitEditedAddress}
-                  disabled={!editRecipient.firstName || !editRecipient.address1 || !editRecipient.city || !editRecipient.state}
-                  sx={{ bgcolor: '#000', '&:hover': { bgcolor: '#333' } }}>
-                  Send to Checkout
+          <DialogContent sx={{ py: 4 }}>
+            {/* Error state */}
+            {ecpStatus === 'error' && (
+              <Box sx={{ textAlign: 'center' }}>
+                <span className="material-icons" style={{ fontSize: 64, color: '#f44336' }}>error_outline</span>
+                <Typography variant="h6" sx={{ mt: 2, mb: 1 }}>Couldn't load checkout</Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>{ecpError}</Typography>
+                <Button variant="contained" onClick={handleClose}
+                  sx={{ borderRadius: 99, textTransform: 'none', fontWeight: 700, background: 'linear-gradient(135deg, #7c3aed, #db2777)' }}>
+                  Go Back
                 </Button>
-                <Button variant="outlined" onClick={cancelAddressEdit}>Cancel</Button>
               </Box>
-            </Paper>
-          )}
+            )}
 
-          {/* Checkout iframe */}
-          {embeddedUrl && ecpStatus !== 'error' && (
-            <Box sx={{ flex: 1, position: 'relative', display: ecpStatus === 'loading' ? 'none' : 'flex' }}>
-              <iframe
-                ref={iframeRef}
-                src={embeddedUrl}
-                style={{ width: '100%', height: '100%', border: 'none', flex: 1 }}
-                allow="payment"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation"
-                title="Shopify Embedded Checkout"
-              />
-            </Box>
-          )}
+            {/* Loading state */}
+            {ecpStatus === 'loading' && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 4 }}>
+                <CircularProgress size={48} />
+                <Typography color="text.secondary">Preparing checkout...</Typography>
+              </Box>
+            )}
 
-          {/* Recipient address badge (shows at bottom when address was auto-sent) */}
-          {addressRequested && !showRecipientEdit && ecpStatus === 'active' && recipient && (
-            <Paper sx={{ p: 1.5, mx: 2, mb: 2, display: 'flex', alignItems: 'center', gap: 1, bgcolor: '#e8f5e9', borderRadius: 2, flexShrink: 0 }}>
-              <span className="material-icons" style={{ color: '#2e7d32' }}>check_circle</span>
-              <Typography variant="body2">
-                Shipping to: <strong>{recipient.firstName} {recipient.lastName}</strong> — {recipient.address1}, {recipient.city}, {recipient.state} {recipient.postalCode}
-              </Typography>
-            </Paper>
-          )}
+            {/* Active states — checkout is in popup */}
+            {['connecting', 'ready', 'active'].includes(ecpStatus) && (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <Typography sx={{ fontSize: 56, mb: 1 }}>💳</Typography>
+                <Typography variant="h6" sx={{ mt: 1, mb: 1, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
+                  Complete checkout in the popup
+                </Typography>
+                <Typography variant="body1" color="text.secondary" sx={{ mb: 3, maxWidth: 320, mx: 'auto', lineHeight: 1.6 }}>
+                  A checkout window opened. Complete your payment there!
+                </Typography>
+
+                {/* ECP status indicator */}
+                <Paper sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, px: 2, py: 1, mb: 3,
+                  borderRadius: 99, bgcolor: ecpStatus === 'active' ? '#f0fdf4' : ecpStatus === 'ready' ? '#eff6ff' : '#faf5ff',
+                  border: `1px solid ${ecpStatus === 'active' ? 'rgba(22,163,74,0.2)' : ecpStatus === 'ready' ? 'rgba(59,130,246,0.2)' : 'rgba(124,58,237,0.2)'}`
+                }}>
+                  <Typography sx={{ fontSize: 14 }}>
+                    {ecpStatus === 'active' ? '🟢' : ecpStatus === 'ready' ? '🔵' : '🟡'}
+                  </Typography>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {ecpStatus === 'connecting' && 'Waiting for ec.ready...'}
+                    {ecpStatus === 'ready' && 'ECP handshake complete ✓'}
+                    {ecpStatus === 'active' && 'Checkout active'}
+                  </Typography>
+                </Paper>
+
+                <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                  <Button variant="contained" onClick={() => {
+                    if (checkoutWindowRef.current && !checkoutWindowRef.current.closed) {
+                      checkoutWindowRef.current.focus();
+                    }
+                  }} sx={{
+                    borderRadius: 99, textTransform: 'none', fontWeight: 700,
+                    background: 'linear-gradient(135deg, #7c3aed, #db2777)', px: 3
+                  }}>
+                    Focus Checkout Window ✨
+                  </Button>
+                </Box>
+              </Box>
+            )}
+
+            {/* Complete state */}
+            {ecpStatus === 'complete' && (
+              <Box sx={{ textAlign: 'center', py: 4 }}>
+                <Typography sx={{ fontSize: 72 }}>🎉</Typography>
+                <Typography variant="h5" sx={{ mt: 1, mb: 1, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
+                  Order placed!
+                </Typography>
+                <Typography variant="body1" color="text.secondary" sx={{ mb: 3, lineHeight: 1.6 }}>
+                  Your gift has been purchased and is on its way to the lucky recipient!
+                </Typography>
+                <Button variant="contained" onClick={handleClose}
+                  sx={{ borderRadius: 99, textTransform: 'none', fontWeight: 700, background: 'linear-gradient(135deg, #7c3aed, #db2777)', px: 4 }}>
+                  Done 🎁
+                </Button>
+              </Box>
+            )}
+
+            {/* Recipient address edit overlay */}
+            {showRecipientEdit && editRecipient && (
+              <Paper sx={{ p: 3, mt: 2, border: '2px solid rgba(124,58,237,0.2)', borderRadius: 4, bgcolor: '#faf5ff' }}>
+                <Typography variant="h6" sx={{ mb: 2, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700 }}>
+                  📍 Gift Recipient Address
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  The checkout is requesting a shipping address. Confirm or update below.
+                </Typography>
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                  <Grid item xs={6}>
+                    <TextField fullWidth label="First name" size="small" value={editRecipient.firstName}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, firstName: e.target.value })} />
+                  </Grid>
+                  <Grid item xs={6}>
+                    <TextField fullWidth label="Last name" size="small" value={editRecipient.lastName}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, lastName: e.target.value })} />
+                  </Grid>
+                </Grid>
+                <TextField fullWidth label="Address" size="small" sx={{ mb: 2 }} value={editRecipient.address1}
+                  onChange={(e) => setEditRecipient({ ...editRecipient, address1: e.target.value })} />
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                  <Grid item xs={5}>
+                    <TextField fullWidth label="City" size="small" value={editRecipient.city}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, city: e.target.value })} />
+                  </Grid>
+                  <Grid item xs={4}>
+                    <FormControl fullWidth size="small">
+                      <InputLabel>State</InputLabel>
+                      <Select value={editRecipient.state} label="State"
+                        onChange={(e) => setEditRecipient({ ...editRecipient, state: e.target.value })}>
+                        {US_STATES.map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={3}>
+                    <TextField fullWidth label="ZIP" size="small" value={editRecipient.postalCode}
+                      onChange={(e) => setEditRecipient({ ...editRecipient, postalCode: e.target.value })} />
+                  </Grid>
+                </Grid>
+                <Box sx={{ display: 'flex', gap: 2 }}>
+                  <Button variant="contained" onClick={submitEditedAddress}
+                    disabled={!editRecipient.firstName || !editRecipient.address1 || !editRecipient.city || !editRecipient.state}
+                    sx={{ borderRadius: 99, textTransform: 'none', fontWeight: 700, background: 'linear-gradient(135deg, #7c3aed, #db2777)', px: 3 }}>
+                    Send to Checkout 📦
+                  </Button>
+                  <Button variant="outlined" onClick={cancelAddressEdit}
+                    sx={{ borderRadius: 99, textTransform: 'none', borderColor: '#7c3aed', color: '#7c3aed' }}>Cancel</Button>
+                </Box>
+              </Paper>
+            )}
+
+            {/* Recipient address badge */}
+            {addressRequested && !showRecipientEdit && ecpStatus === 'active' && recipient && (
+              <Paper sx={{ p: 2, mt: 2, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#f0fdf4', borderRadius: 3, border: '1px solid rgba(22,163,74,0.2)' }}>
+                <Typography sx={{ fontSize: 20 }}>✅</Typography>
+                <Typography variant="body2">
+                  Shipping to: <strong>{recipient.firstName} {recipient.lastName}</strong> — {recipient.address1}, {recipient.city}, {recipient.state} {recipient.postalCode}
+                </Typography>
+              </Paper>
+            )}
+          </DialogContent>
         </Dialog>
       );
     }
