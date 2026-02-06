@@ -1,0 +1,13 @@
+{
+  "name": "Catalog Gifting Agent",
+  "description": "A gift registry agent that coordinates group purchases with recipient shipping addresses.",
+  "version": "1.0.0",
+  "ucp": {
+    "version": "2026-01-11",
+    "capabilities": {
+      "dev.ucp.shopping.checkout": [{ "version": "2026-01-11" }],
+      "dev.ucp.shopping.fulfillment": [{ "version": "2026-01-11" }]
+    },
+    "delegations": ["fulfillment.address_change"]
+  }
+}
