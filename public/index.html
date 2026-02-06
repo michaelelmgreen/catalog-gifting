@@ -1,0 +1,1309 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Gift Registry</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <!-- Material Icons -->
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Roboto', sans-serif; background: #f5f5f5; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React & ReactDOM -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+
+  <!-- Material UI -->
+  <script src="https://unpkg.com/@mui/material@5/umd/material-ui.production.min.js" crossorigin></script>
+
+  <!-- Babel for JSX -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel" data-type="module">
+    const {
+      AppBar, Toolbar, Typography, Container, Grid, Card, CardMedia, CardContent,
+      CardActions, Button, TextField, Box, Paper, Chip, Rating, Dialog, DialogTitle,
+      DialogContent, DialogActions, Snackbar, Alert, IconButton, InputAdornment,
+      Tabs, Tab, Avatar, List, ListItem, ListItemAvatar, ListItemText, Divider,
+      CircularProgress, Fab, Badge, Select, MenuItem, FormControl, InputLabel
+    } = MaterialUI;
+
+    const { useState, useEffect } = React;
+
+    // US States for dropdown
+    const US_STATES = [
+      'Alabama', 'Alaska', 'Arizona', 'Arkansas', 'California', 'Colorado', 'Connecticut',
+      'Delaware', 'Florida', 'Georgia', 'Hawaii', 'Idaho', 'Illinois', 'Indiana', 'Iowa',
+      'Kansas', 'Kentucky', 'Louisiana', 'Maine', 'Maryland', 'Massachusetts', 'Michigan',
+      'Minnesota', 'Mississippi', 'Missouri', 'Montana', 'Nebraska', 'Nevada', 'New Hampshire',
+      'New Jersey', 'New Mexico', 'New York', 'North Carolina', 'North Dakota', 'Ohio',
+      'Oklahoma', 'Oregon', 'Pennsylvania', 'Rhode Island', 'South Carolina', 'South Dakota',
+      'Tennessee', 'Texas', 'Utah', 'Vermont', 'Virginia', 'Washington', 'West Virginia',
+      'Wisconsin', 'Wyoming'
+    ];
+
+    // State abbreviations for Shopify
+    const STATE_CODES = {
+      'Alabama': 'AL', 'Alaska': 'AK', 'Arizona': 'AZ', 'Arkansas': 'AR', 'California': 'CA',
+      'Colorado': 'CO', 'Connecticut': 'CT', 'Delaware': 'DE', 'Florida': 'FL', 'Georgia': 'GA',
+      'Hawaii': 'HI', 'Idaho': 'ID', 'Illinois': 'IL', 'Indiana': 'IN', 'Iowa': 'IA',
+      'Kansas': 'KS', 'Kentucky': 'KY', 'Louisiana': 'LA', 'Maine': 'ME', 'Maryland': 'MD',
+      'Massachusetts': 'MA', 'Michigan': 'MI', 'Minnesota': 'MN', 'Mississippi': 'MS', 'Missouri': 'MO',
+      'Montana': 'MT', 'Nebraska': 'NE', 'Nevada': 'NV', 'New Hampshire': 'NH', 'New Jersey': 'NJ',
+      'New Mexico': 'NM', 'New York': 'NY', 'North Carolina': 'NC', 'North Dakota': 'ND', 'Ohio': 'OH',
+      'Oklahoma': 'OK', 'Oregon': 'OR', 'Pennsylvania': 'PA', 'Rhode Island': 'RI', 'South Carolina': 'SC',
+      'South Dakota': 'SD', 'Tennessee': 'TN', 'Texas': 'TX', 'Utah': 'UT', 'Vermont': 'VT',
+      'Virginia': 'VA', 'Washington': 'WA', 'West Virginia': 'WV', 'Wisconsin': 'WI', 'Wyoming': 'WY'
+    };
+
+    // Phone number validation and formatting
+    const formatPhoneNumber = (value) => {
+      const digits = value.replace(/\D/g, '');
+      if (digits.length <= 3) return digits;
+      if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+      return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+    };
+
+    const validatePhone = (phone) => {
+      const digits = phone.replace(/\D/g, '');
+      if (!digits) return '';
+      if (digits.length < 10) return 'Phone number must be at least 10 digits';
+      if (digits.length > 15) return 'Phone number is too long';
+      if (digits.length === 10 && digits[0] === '0') return 'Invalid area code';
+      if (digits.length === 10 && digits[0] === '1') return 'Do not include country code';
+      return '';
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // App Component
+    // ─────────────────────────────────────────────────────────────────────────
+    function App() {
+      const [tab, setTab] = useState(0);
+      const [products, setProducts] = useState([]);
+      const [loading, setLoading] = useState(true);
+      const [search, setSearch] = useState('');
+      const [source, setSource] = useState('');
+
+      // Cart state — pre-loaded with known working test product
+      const [cart, setCart] = useState([
+        {
+          id: 'art-of-potato-mr-potato-head',
+          title: 'Mr Potato Head',
+          price: '14.95',
+          currency: 'USD',
+          image: 'https://cdn.shopify.com/s/files/1/0053/8342/2008/products/GUEST_4cf448b0-952c-4b1e-a49f-aff5591c37a7.jpg?v=1557862066',
+          merchant: 'Art of Potato',
+          shopDomain: 'art-of-potato.myshopify.com',
+          variantId: 'gid://shopify/ProductVariant/19509261107256',
+          quantity: 1
+        }
+      ]);
+      const [cartOpen, setCartOpen] = useState(false);
+
+      // Group state
+      const [group, setGroup] = useState(null);
+      const [leadForm, setLeadForm] = useState({ firstName: '', lastName: '', email: '', phone: '' });
+      const [leadPhoneError, setLeadPhoneError] = useState('');
+      const [memberForm, setMemberForm] = useState({ firstName: '', lastName: '', email: '', phone: '' });
+      const [phoneError, setPhoneError] = useState('');
+      const [recipientForm, setRecipientForm] = useState({
+        country: 'United States',
+        firstName: '',
+        lastName: '',
+        address1: '',
+        address2: '',
+        city: '',
+        state: '',
+        postalCode: ''
+      });
+
+      // Dialogs & alerts
+      const [checkoutLoading, setCheckoutLoading] = useState(false);
+      const [checkoutResponse, setCheckoutResponse] = useState(null); // MCP response modal
+      const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
+
+      // Embedded Checkout Protocol (ECP)
+      const [embeddedCheckout, setEmbeddedCheckout] = useState(null); // { continueUrl, recipient, productTitle }
+      const [orderConfirmation, setOrderConfirmation] = useState(null); // { orderId, checkout }
+
+      // Load products
+      useEffect(() => {
+        loadProducts();
+      }, []);
+
+      const loadProducts = async (query = '') => {
+        setLoading(true);
+        try {
+          const params = new URLSearchParams();
+          if (query) params.set('q', query);
+          const res = await fetch('/api/products?' + params.toString());
+          const data = await res.json();
+          setProducts(data.products || []);
+          setSource(data.source || '');
+        } catch (err) {
+          console.error(err);
+        }
+        setLoading(false);
+      };
+
+      const handleSearch = (e) => {
+        const q = e.target.value;
+        setSearch(q);
+        clearTimeout(window.searchTimeout);
+        window.searchTimeout = setTimeout(() => loadProducts(q), 400);
+      };
+
+      const createGroup = async () => {
+        const res = await fetch('/api/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(leadForm)
+        });
+        const data = await res.json();
+        if (data.group) {
+          setGroup(data.group);
+          setSnackbar({ open: true, message: 'Group created!', severity: 'success' });
+          setTab(1);
+        } else {
+          setSnackbar({ open: true, message: data.error || 'Error', severity: 'error' });
+        }
+      };
+
+      const addMember = async () => {
+        const res = await fetch(`/api/groups/${group.id}/members`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(memberForm)
+        });
+        const data = await res.json();
+        if (data.member) {
+          const groupRes = await fetch(`/api/groups/${group.id}`);
+          const groupData = await groupRes.json();
+          setGroup(groupData.group);
+          setMemberForm({ firstName: '', lastName: '', email: '', phone: '' });
+          setPhoneError('');
+          setSnackbar({ open: true, message: 'Member added!', severity: 'success' });
+        }
+      };
+
+      const setRecipient = async () => {
+        const res = await fetch(`/api/groups/${group.id}/recipient`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...recipientForm,
+            provinceCode: STATE_CODES[recipientForm.state] || recipientForm.state
+          })
+        });
+        const data = await res.json();
+        if (data.recipient) {
+          setGroup({ ...group, recipient: data.recipient });
+          setSnackbar({ open: true, message: 'Recipient set!', severity: 'success' });
+          setTab(2);
+        }
+      };
+
+      // Cart functions
+      const addToCart = (product) => {
+        const existing = cart.find(item => item.id === product.id);
+        if (existing) {
+          setCart(cart.map(item =>
+            item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+          ));
+        } else {
+          setCart([...cart, { ...product, quantity: 1 }]);
+        }
+        setSnackbar({ open: true, message: `${product.title} added to cart`, severity: 'success' });
+      };
+
+      const updateQuantity = (productId, delta) => {
+        setCart(cart.map(item => {
+          if (item.id === productId) {
+            const newQty = item.quantity + delta;
+            return newQty > 0 ? { ...item, quantity: newQty } : item;
+          }
+          return item;
+        }).filter(item => item.quantity > 0));
+      };
+
+      const removeFromCart = (productId) => {
+        setCart(cart.filter(item => item.id !== productId));
+      };
+
+      const cartTotal = cart.reduce((sum, item) => sum + (parseFloat(item.price) || 0) * item.quantity, 0);
+      const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+      // Checkout via MCP - creates checkout with group lead email + recipient shipping address
+      const checkoutItem = async (item) => {
+        if (!group) {
+          setSnackbar({ open: true, message: 'Create a group first', severity: 'warning' });
+          setCartOpen(false);
+          setTab(0);
+          return;
+        }
+        if (!group.recipient) {
+          setSnackbar({ open: true, message: 'Set a recipient first', severity: 'warning' });
+          setCartOpen(false);
+          setTab(1);
+          return;
+        }
+
+        // Check if product has variantId for MCP checkout
+        if (!item.variantId) {
+          setSnackbar({ open: true, message: 'Checkout unavailable - no variant ID for this product', severity: 'error' });
+          return;
+        }
+
+        setCheckoutLoading(true);
+        try {
+          const res = await fetch('/api/create-checkout', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              groupId: group.id,
+              variantId: item.variantId,
+              quantity: item.quantity,
+              shopDomain: item.shopDomain
+            })
+          });
+          const data = await res.json();
+
+          // Check if the checkout requires escalation → open embedded checkout
+          const checkoutStatus = data.status || data.mcpResponse?.status;
+          if (checkoutStatus === 'requires_escalation' && data.checkoutUrl) {
+            setCartOpen(false);
+            setEmbeddedCheckout({
+              continueUrl: data.checkoutUrl,
+              recipient: group.recipient,
+              productTitle: item.title,
+              productPrice: item.price,
+              quantity: item.quantity
+            });
+            setSnackbar({ open: true, message: 'Checkout requires escalation — opening embedded checkout...', severity: 'info' });
+          } else {
+            // Show the response modal for inspection / direct URL
+            setCheckoutResponse({
+              ...data,
+              productTitle: item.title,
+              productPrice: item.price,
+              quantity: item.quantity
+            });
+
+            if (data.checkoutUrl) {
+              setSnackbar({ open: true, message: 'Checkout created! Open the checkout URL from the response modal.', severity: 'success' });
+            }
+          }
+        } catch (err) {
+          console.error('Checkout error:', err);
+          setCheckoutResponse({
+            success: false,
+            error: err.message,
+            productTitle: item.title
+          });
+        }
+        setCheckoutLoading(false);
+      };
+
+      return (
+        <Box sx={{ minHeight: '100vh', bgcolor: '#f5f5f5' }}>
+          {/* App Bar */}
+          <AppBar position="sticky" sx={{ bgcolor: '#5c6bc0' }}>
+            <Toolbar>
+              <span className="material-icons" style={{ marginRight: 12 }}>card_giftcard</span>
+              <Typography variant="h6" sx={{ flexGrow: 1 }}>Gift Registry</Typography>
+              {group && (
+                <Chip
+                  avatar={<Avatar>{group.lead.firstName[0]}</Avatar>}
+                  label={`Group ${group.id}`}
+                  sx={{ bgcolor: 'rgba(255,255,255,0.2)', color: 'white', mr: 2 }}
+                />
+              )}
+              <IconButton color="inherit" onClick={() => setCartOpen(true)}>
+                <Badge badgeContent={cartCount} color="error">
+                  <span className="material-icons">shopping_cart</span>
+                </Badge>
+              </IconButton>
+            </Toolbar>
+            <Tabs value={tab} onChange={(e, v) => setTab(v)} textColor="inherit" indicatorColor="secondary" centered>
+              <Tab label="Group" icon={<span className="material-icons">group_add</span>} />
+              <Tab label="Members" icon={<span className="material-icons">people</span>} disabled={!group} />
+              <Tab label="Products" icon={<span className="material-icons">shopping_bag</span>} />
+            </Tabs>
+          </AppBar>
+
+          <Container maxWidth="lg" sx={{ py: 3 }}>
+            {/* Tab 0: Create Group */}
+            {tab === 0 && (
+              <Paper sx={{ p: 3, maxWidth: 500, mx: 'auto' }}>
+                <Typography variant="h5" gutterBottom>
+                  <span className="material-icons" style={{ verticalAlign: 'middle', marginRight: 8 }}>person</span>
+                  Group Lead
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  You'll coordinate the group gift purchase. Order confirmations will be sent to your email.
+                </Typography>
+                <TextField
+                  fullWidth label="First Name" variant="outlined" sx={{ mb: 2 }}
+                  value={leadForm.firstName}
+                  onChange={(e) => setLeadForm({ ...leadForm, firstName: e.target.value })}
+                />
+                <TextField
+                  fullWidth label="Last Name" variant="outlined" sx={{ mb: 2 }}
+                  value={leadForm.lastName}
+                  onChange={(e) => setLeadForm({ ...leadForm, lastName: e.target.value })}
+                />
+                <TextField
+                  fullWidth label="Email" type="email" variant="outlined" sx={{ mb: 2 }}
+                  value={leadForm.email}
+                  onChange={(e) => setLeadForm({ ...leadForm, email: e.target.value })}
+                  helperText="Order confirmations & tracking will be sent here"
+                />
+                <TextField
+                  fullWidth
+                  label="Phone Number"
+                  variant="outlined"
+                  sx={{ mb: 3 }}
+                  placeholder="(555) 123-4567"
+                  value={leadForm.phone}
+                  error={!!leadPhoneError}
+                  helperText={leadPhoneError}
+                  onChange={(e) => {
+                    const formatted = formatPhoneNumber(e.target.value);
+                    setLeadForm({ ...leadForm, phone: formatted });
+                    setLeadPhoneError(validatePhone(formatted));
+                  }}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <span className="material-icons" style={{ fontSize: 18 }}>phone</span>
+                      </InputAdornment>
+                    )
+                  }}
+                />
+                <Button
+                  variant="contained" size="large" fullWidth
+                  onClick={createGroup}
+                  disabled={!leadForm.firstName || !leadForm.lastName || !leadForm.email || !!leadPhoneError}
+                >
+                  Create Group
+                </Button>
+                {group && (
+                  <Alert severity="success" sx={{ mt: 2 }}>
+                    Group #{group.id} created! Add members and set a recipient.
+                  </Alert>
+                )}
+              </Paper>
+            )}
+
+            {/* Tab 1: Members & Recipient */}
+            {tab === 1 && group && (
+              <Grid container spacing={3}>
+                <Grid item xs={12} md={6}>
+                  <Paper sx={{ p: 3 }}>
+                    <Typography variant="h6" gutterBottom>
+                      <span className="material-icons" style={{ verticalAlign: 'middle', marginRight: 8 }}>person_add</span>
+                      Invite Members
+                    </Typography>
+                    <TextField
+                      fullWidth label="First Name" size="small" sx={{ mb: 1 }}
+                      value={memberForm.firstName}
+                      onChange={(e) => setMemberForm({ ...memberForm, firstName: e.target.value })}
+                    />
+                    <TextField
+                      fullWidth label="Last Name" size="small" sx={{ mb: 1 }}
+                      value={memberForm.lastName}
+                      onChange={(e) => setMemberForm({ ...memberForm, lastName: e.target.value })}
+                    />
+                    <TextField
+                      fullWidth label="Email" size="small" sx={{ mb: 1 }}
+                      value={memberForm.email}
+                      onChange={(e) => setMemberForm({ ...memberForm, email: e.target.value })}
+                    />
+                    <TextField
+                      fullWidth
+                      label="Phone Number"
+                      size="small"
+                      sx={{ mb: 2 }}
+                      placeholder="(555) 123-4567"
+                      value={memberForm.phone}
+                      error={!!phoneError}
+                      helperText={phoneError}
+                      onChange={(e) => {
+                        const formatted = formatPhoneNumber(e.target.value);
+                        setMemberForm({ ...memberForm, phone: formatted });
+                        setPhoneError(validatePhone(formatted));
+                      }}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <span className="material-icons" style={{ fontSize: 18 }}>phone</span>
+                          </InputAdornment>
+                        )
+                      }}
+                    />
+                    <Button variant="outlined" onClick={addMember} disabled={!memberForm.email || !!phoneError}>
+                      Add Member
+                    </Button>
+
+                    {group.members.length > 0 && (
+                      <List sx={{ mt: 2 }}>
+                        {group.members.map((m, i) => (
+                          <ListItem key={i}>
+                            <ListItemAvatar>
+                              <Avatar sx={{ bgcolor: m.isLead ? '#ff9800' : '#5c6bc0' }}>
+                                {m.isLead ? <span className="material-icons" style={{ fontSize: 20 }}>star</span> : (m.firstName || m.email)[0].toUpperCase()}
+                              </Avatar>
+                            </ListItemAvatar>
+                            <ListItemText
+                              primary={
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  {`${m.firstName || ''} ${m.lastName || ''}`}
+                                  {m.isLead && <Chip label="Group Lead" size="small" color="warning" sx={{ height: 20, fontSize: '0.7rem' }} />}
+                                </Box>
+                              }
+                              secondary={<>{m.email}{m.phone && <><br/>{m.phone}</>}</>}
+                            />
+                          </ListItem>
+                        ))}
+                      </List>
+                    )}
+                  </Paper>
+                </Grid>
+
+                <Grid item xs={12} md={6}>
+                  <Paper sx={{ p: 3 }}>
+                    <Typography variant="h6" gutterBottom sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1 }}>
+                      Gift Recipient
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      The gift will be shipped here. The recipient won't receive order emails.
+                    </Typography>
+
+                    <FormControl fullWidth sx={{ mb: 2 }}>
+                      <InputLabel>Country/Region</InputLabel>
+                      <Select
+                        value={recipientForm.country}
+                        label="Country/Region"
+                        onChange={(e) => setRecipientForm({ ...recipientForm, country: e.target.value })}
+                      >
+                        <MenuItem value="United States">United States</MenuItem>
+                        <MenuItem value="Canada">Canada</MenuItem>
+                        <MenuItem value="United Kingdom">United Kingdom</MenuItem>
+                      </Select>
+                    </FormControl>
+
+                    <Grid container spacing={2} sx={{ mb: 2 }}>
+                      <Grid item xs={6}>
+                        <TextField
+                          fullWidth label="First name" variant="outlined"
+                          value={recipientForm.firstName}
+                          onChange={(e) => setRecipientForm({ ...recipientForm, firstName: e.target.value })}
+                        />
+                      </Grid>
+                      <Grid item xs={6}>
+                        <TextField
+                          fullWidth label="Last name" variant="outlined"
+                          value={recipientForm.lastName}
+                          onChange={(e) => setRecipientForm({ ...recipientForm, lastName: e.target.value })}
+                        />
+                      </Grid>
+                    </Grid>
+
+                    <TextField
+                      fullWidth
+                      label="Address (35 character limit)"
+                      variant="outlined"
+                      sx={{ mb: 2 }}
+                      inputProps={{ maxLength: 35 }}
+                      value={recipientForm.address1}
+                      onChange={(e) => setRecipientForm({ ...recipientForm, address1: e.target.value })}
+                    />
+
+                    <TextField
+                      fullWidth
+                      label="Apt, suite, etc. (optional)"
+                      variant="outlined"
+                      sx={{ mb: 2 }}
+                      inputProps={{ maxLength: 35 }}
+                      value={recipientForm.address2}
+                      onChange={(e) => setRecipientForm({ ...recipientForm, address2: e.target.value })}
+                    />
+
+                    <Grid container spacing={2} sx={{ mb: 3 }}>
+                      <Grid item xs={5}>
+                        <TextField
+                          fullWidth label="City" variant="outlined"
+                          value={recipientForm.city}
+                          onChange={(e) => setRecipientForm({ ...recipientForm, city: e.target.value })}
+                        />
+                      </Grid>
+                      <Grid item xs={4}>
+                        <FormControl fullWidth>
+                          <InputLabel>State</InputLabel>
+                          <Select
+                            value={recipientForm.state}
+                            label="State"
+                            onChange={(e) => setRecipientForm({ ...recipientForm, state: e.target.value })}
+                          >
+                            {US_STATES.map(state => (
+                              <MenuItem key={state} value={state}>{state}</MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      </Grid>
+                      <Grid item xs={3}>
+                        <TextField
+                          fullWidth label="ZIP code" variant="outlined"
+                          value={recipientForm.postalCode}
+                          onChange={(e) => setRecipientForm({ ...recipientForm, postalCode: e.target.value })}
+                        />
+                      </Grid>
+                    </Grid>
+
+                    <Button
+                      variant="contained"
+                      fullWidth
+                      size="large"
+                      onClick={setRecipient}
+                      disabled={!recipientForm.firstName || !recipientForm.address1 || !recipientForm.city || !recipientForm.state}
+                      sx={{ bgcolor: '#000', '&:hover': { bgcolor: '#333' } }}
+                    >
+                      Save & Browse Gifts
+                    </Button>
+
+                    {group.recipient && (
+                      <Alert severity="info" sx={{ mt: 2 }}>
+                        Shipping to: {group.recipient.firstName} {group.recipient.lastName}, {group.recipient.city}, {group.recipient.state}
+                      </Alert>
+                    )}
+                  </Paper>
+                </Grid>
+              </Grid>
+            )}
+
+            {/* Tab 2: Products Grid */}
+            {tab === 2 && (
+              <Box>
+                <Paper sx={{ p: 2, mb: 3 }}>
+                  <TextField
+                    fullWidth
+                    placeholder="Search gifts..."
+                    value={search}
+                    onChange={handleSearch}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <span className="material-icons">search</span>
+                        </InputAdornment>
+                      )
+                    }}
+                  />
+                  {source && (
+                    <Chip
+                      size="small"
+                      label={source === 'shopify_catalog_api' ? 'Shopify Catalog API' : 'Mock Data'}
+                      color={source === 'shopify_catalog_api' ? 'success' : 'default'}
+                      sx={{ mt: 1 }}
+                    />
+                  )}
+                </Paper>
+
+                {loading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 5 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : (
+                  <Grid container spacing={3}>
+                    {products.map((product) => (
+                      <Grid item xs={6} sm={4} md={3} key={product.id}>
+                        <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column', transition: '0.2s', '&:hover': { transform: 'translateY(-4px)', boxShadow: 4 } }}>
+                          <CardMedia
+                            component="img"
+                            height="160"
+                            image={product.image || 'https://via.placeholder.com/300x200?text=No+Image'}
+                            alt={product.title}
+                            sx={{ objectFit: 'cover', bgcolor: '#eee' }}
+                          />
+                          <CardContent sx={{ flexGrow: 1, pb: 1 }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 500, lineHeight: 1.3, mb: 0.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                              {product.title}
+                            </Typography>
+                            {product.merchant && (
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                {product.merchant}
+                              </Typography>
+                            )}
+                            {product.rating && (
+                              <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5 }}>
+                                <Rating value={product.rating} precision={0.1} size="small" readOnly />
+                                <Typography variant="caption" sx={{ ml: 0.5 }}>({product.reviewCount})</Typography>
+                              </Box>
+                            )}
+                            <Typography variant="h6" color="primary" sx={{ mt: 1 }}>
+                              {product.price ? `$${product.price}` : ''}
+                            </Typography>
+                          </CardContent>
+                          <CardActions sx={{ pt: 0, px: 2, pb: 2 }}>
+                            <Button
+                              variant="contained"
+                              size="small"
+                              fullWidth
+                              onClick={() => addToCart(product)}
+                              startIcon={<span className="material-icons" style={{ fontSize: 18 }}>add_shopping_cart</span>}
+                            >
+                              Gift This
+                            </Button>
+                          </CardActions>
+                        </Card>
+                      </Grid>
+                    ))}
+                  </Grid>
+                )}
+
+                {!loading && products.length === 0 && (
+                  <Paper sx={{ p: 4, textAlign: 'center' }}>
+                    <span className="material-icons" style={{ fontSize: 48, color: '#ccc' }}>search_off</span>
+                    <Typography color="text.secondary">No products found</Typography>
+                  </Paper>
+                )}
+              </Box>
+            )}
+          </Container>
+
+          {/* Shopping Cart Dialog */}
+          <Dialog
+            open={cartOpen}
+            onClose={() => setCartOpen(false)}
+            maxWidth="md"
+            fullWidth
+            PaperProps={{ sx: { maxHeight: '90vh' } }}
+          >
+            <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #eee' }}>
+              <Typography variant="h5" sx={{ fontWeight: 600 }}>SHOPPING BAG</Typography>
+              <Typography variant="body1" color="text.secondary">{cartCount} ITEMS</Typography>
+            </DialogTitle>
+            <DialogContent sx={{ p: 0 }}>
+              {cart.length === 0 ? (
+                <Box sx={{ p: 4, textAlign: 'center' }}>
+                  <span className="material-icons" style={{ fontSize: 64, color: '#ccc' }}>shopping_bag</span>
+                  <Typography color="text.secondary" sx={{ mt: 2 }}>Your bag is empty</Typography>
+                  <Button variant="outlined" sx={{ mt: 2 }} onClick={() => { setCartOpen(false); setTab(2); }}>
+                    Browse Gifts
+                  </Button>
+                </Box>
+              ) : (
+                <Grid container>
+                  {/* Cart Items */}
+                  <Grid item xs={12} md={8} sx={{ borderRight: { md: '1px solid #eee' } }}>
+                    {cart.map((item, index) => (
+                      <Box key={item.id}>
+                        <Box sx={{ display: 'flex', p: 3, gap: 3 }}>
+                          <Box
+                            component="img"
+                            src={item.image || 'https://via.placeholder.com/120x150?text=No+Image'}
+                            alt={item.title}
+                            sx={{ width: 120, height: 150, objectFit: 'cover', borderRadius: 1, bgcolor: '#f5f5f5' }}
+                          />
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
+                              {item.title}
+                            </Typography>
+                            {item.merchant && (
+                              <Typography variant="body2" color="text.secondary">
+                                Sold by: {item.merchant}
+                              </Typography>
+                            )}
+
+                            {/* Quantity Controls */}
+                            <Box sx={{ display: 'flex', alignItems: 'center', mt: 2, gap: 1 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', border: '1px solid #ddd', borderRadius: 1 }}>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => updateQuantity(item.id, -1)}
+                                  disabled={item.quantity <= 1}
+                                >
+                                  <span className="material-icons" style={{ fontSize: 18 }}>remove</span>
+                                </IconButton>
+                                <Typography sx={{ px: 2, minWidth: 30, textAlign: 'center' }}>{item.quantity}</Typography>
+                                <IconButton size="small" onClick={() => updateQuantity(item.id, 1)}>
+                                  <span className="material-icons" style={{ fontSize: 18 }}>add</span>
+                                </IconButton>
+                              </Box>
+                            </Box>
+
+                            <Box sx={{ display: 'flex', alignItems: 'center', mt: 2, gap: 2 }}>
+                              <Button
+                                size="small"
+                                sx={{ textTransform: 'none', textDecoration: 'underline', p: 0, minWidth: 'auto' }}
+                                onClick={() => removeFromCart(item.id)}
+                              >
+                                Remove
+                              </Button>
+                            </Box>
+                          </Box>
+
+                          <Box sx={{ textAlign: 'right', minWidth: 100 }}>
+                            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                              ${((parseFloat(item.price) || 0) * item.quantity).toFixed(0)}
+                            </Typography>
+                            <Button
+                              variant="contained"
+                              size="small"
+                              disabled={checkoutLoading || !item.variantId}
+                              sx={{ mt: 2, bgcolor: '#000', '&:hover': { bgcolor: '#333' }, textTransform: 'uppercase', fontWeight: 600 }}
+                              onClick={() => checkoutItem(item)}
+                            >
+                              {checkoutLoading ? <CircularProgress size={20} color="inherit" /> : 'Checkout'}
+                            </Button>
+                            {!item.variantId && (
+                              <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
+                                Not available
+                              </Typography>
+                            )}
+                          </Box>
+                        </Box>
+                        {index < cart.length - 1 && <Divider />}
+                      </Box>
+                    ))}
+                  </Grid>
+
+                  {/* Order Summary */}
+                  <Grid item xs={12} md={4}>
+                    <Box sx={{ p: 3 }}>
+                      <Typography variant="h6" sx={{ fontWeight: 600, mb: 2, textTransform: 'uppercase' }}>
+                        Order Summary
+                      </Typography>
+
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
+                        <Typography>Subtotal:</Typography>
+                        <Typography sx={{ fontWeight: 600 }}>${cartTotal.toFixed(0)}</Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 3 }}>
+                        <Typography>Shipping:</Typography>
+                        <Typography sx={{ fontWeight: 600 }}>Calculated at checkout</Typography>
+                      </Box>
+
+                      <Divider sx={{ my: 2 }} />
+
+                      {group && group.recipient && (
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>Shipping to:</Typography>
+                          <Typography variant="body2">{group.recipient.firstName} {group.recipient.lastName}</Typography>
+                          <Typography variant="body2">{group.recipient.address1}</Typography>
+                          <Typography variant="body2">{group.recipient.city}, {group.recipient.state} {group.recipient.postalCode}</Typography>
+                        </Alert>
+                      )}
+
+                      {group && (
+                        <Alert severity="success" icon={<span className="material-icons">email</span>}>
+                          <Typography variant="body2">Order confirmations will go to <strong>{group.lead.email}</strong> (not the recipient)</Typography>
+                        </Alert>
+                      )}
+
+                      {!group && (
+                        <Alert severity="warning">
+                          <Typography variant="body2">Create a group and set recipient before checkout</Typography>
+                        </Alert>
+                      )}
+                    </Box>
+                  </Grid>
+                </Grid>
+              )}
+            </DialogContent>
+          </Dialog>
+
+          {/* MCP Checkout Response Modal */}
+          <Dialog
+            open={!!checkoutResponse}
+            onClose={() => setCheckoutResponse(null)}
+            maxWidth="md"
+            fullWidth
+          >
+            <DialogTitle sx={{ bgcolor: checkoutResponse?.success ? '#4caf50' : '#f44336', color: 'white', display: 'flex', alignItems: 'center', gap: 1 }}>
+              <span className="material-icons">{checkoutResponse?.success ? 'check_circle' : 'error'}</span>
+              MCP create_checkout {checkoutResponse?.success ? 'Response' : 'Error'}
+            </DialogTitle>
+            <DialogContent sx={{ mt: 2 }}>
+              {checkoutResponse && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+                  {/* Product info */}
+                  <Paper variant="outlined" sx={{ p: 2 }}>
+                    <Typography variant="subtitle2" color="text.secondary">Product</Typography>
+                    <Typography variant="h6">{checkoutResponse.productTitle}</Typography>
+                    {checkoutResponse.productPrice && (
+                      <Typography variant="body2">Price: ${checkoutResponse.productPrice} × {checkoutResponse.quantity || 1}</Typography>
+                    )}
+                  </Paper>
+
+                  {/* Group info */}
+                  {checkoutResponse.groupInfo && (
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                      <Typography variant="subtitle2" color="text.secondary">Routing</Typography>
+                      <Typography variant="body2"><strong>Buyer email:</strong> {checkoutResponse.groupInfo.leadEmail}</Typography>
+                      <Typography variant="body2"><strong>Ship to:</strong> {checkoutResponse.groupInfo.recipientName}</Typography>
+                      <Typography variant="body2">{checkoutResponse.groupInfo.recipientAddress}</Typography>
+                    </Paper>
+                  )}
+
+                  {/* Checkout URL */}
+                  {checkoutResponse.checkoutUrl && (
+                    <Button
+                      variant="contained"
+                      color="success"
+                      href={checkoutResponse.checkoutUrl}
+                      target="_blank"
+                      startIcon={<span className="material-icons">launch</span>}
+                      sx={{ py: 1.5 }}
+                    >
+                      Open Checkout
+                    </Button>
+                  )}
+
+                  {/* Error */}
+                  {checkoutResponse.error && (
+                    <Alert severity="error">
+                      <Typography variant="body2" sx={{ fontWeight: 600 }}>Error</Typography>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', whiteSpace: 'pre-wrap', wordBreak: 'break-all', mt: 0.5 }}>
+                        {typeof checkoutResponse.error === 'string' ? checkoutResponse.error : JSON.stringify(checkoutResponse.error, null, 2)}
+                      </Typography>
+                    </Alert>
+                  )}
+
+                  {/* Request payload */}
+                  {checkoutResponse.requestPayload && (
+                    <Paper variant="outlined" sx={{ p: 2 }}>
+                      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                        UCP/MCP Request → {checkoutResponse.ucpEndpoint || 'POST {shopDomain}/api/ucp/mcp'}
+                      </Typography>
+                      <Box sx={{ bgcolor: '#263238', color: '#e0e0e0', p: 2, borderRadius: 1, maxHeight: 250, overflow: 'auto' }}>
+                        <pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                          {JSON.stringify(checkoutResponse.requestPayload, null, 2)}
+                        </pre>
+                      </Box>
+                    </Paper>
+                  )}
+
+                  {/* MCP response */}
+                  <Paper variant="outlined" sx={{ p: 2 }}>
+                    <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>UCP/MCP Response</Typography>
+                    <Box sx={{ bgcolor: '#263238', color: '#e0e0e0', p: 2, borderRadius: 1, maxHeight: 250, overflow: 'auto' }}>
+                      <pre style={{ margin: 0, fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                        {JSON.stringify(checkoutResponse.mcpResponse || { error: checkoutResponse.error }, null, 2)}
+                      </pre>
+                    </Box>
+                  </Paper>
+                </Box>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={() => setCheckoutResponse(null)}>Close</Button>
+            </DialogActions>
+          </Dialog>
+
+          {/* Embedded Checkout (ECP) Dialog */}
+          {embeddedCheckout && (
+            <EmbeddedCheckout
+              continueUrl={embeddedCheckout.continueUrl}
+              recipient={embeddedCheckout.recipient}
+              productTitle={embeddedCheckout.productTitle}
+              onComplete={(params) => {
+                setEmbeddedCheckout(null);
+                setOrderConfirmation(params);
+                setSnackbar({ open: true, message: 'Order completed! 🎉', severity: 'success' });
+              }}
+              onClose={() => setEmbeddedCheckout(null)}
+            />
+          )}
+
+          {/* Order Confirmation Dialog */}
+          <Dialog
+            open={!!orderConfirmation}
+            onClose={() => setOrderConfirmation(null)}
+            maxWidth="sm"
+            fullWidth
+          >
+            <DialogTitle sx={{ bgcolor: '#4caf50', color: 'white', display: 'flex', alignItems: 'center', gap: 1 }}>
+              <span className="material-icons">celebration</span>
+              Order Confirmed!
+            </DialogTitle>
+            <DialogContent sx={{ mt: 2 }}>
+              {orderConfirmation && (
+                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, py: 3 }}>
+                  <span className="material-icons" style={{ fontSize: 72, color: '#4caf50' }}>check_circle</span>
+                  <Typography variant="h5" sx={{ fontWeight: 600, textAlign: 'center' }}>
+                    The gift is on its way!
+                  </Typography>
+                  {orderConfirmation?.checkout?.order?.id && (
+                    <Typography variant="body2" color="text.secondary">
+                      Order: {orderConfirmation.checkout.order.id}
+                    </Typography>
+                  )}
+                  {group && (
+                    <Alert severity="info" sx={{ width: '100%' }}>
+                      <Typography variant="body2">
+                        Confirmation sent to <strong>{group.lead.email}</strong>.
+                        The recipient won't know until the gift arrives!
+                      </Typography>
+                    </Alert>
+                  )}
+                </Box>
+              )}
+            </DialogContent>
+            <DialogActions>
+              <Button variant="contained" onClick={() => setOrderConfirmation(null)}>Done</Button>
+            </DialogActions>
+          </Dialog>
+
+          {/* Snackbar notifications */}
+          <Snackbar
+            open={snackbar.open}
+            autoHideDuration={4000}
+            onClose={() => setSnackbar({ ...snackbar, open: false })}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          >
+            <Alert severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })}>
+              {snackbar.message}
+            </Alert>
+          </Snackbar>
+        </Box>
+      );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // EmbeddedCheckout Component — ECP iframe bridge
+    // Handles: ec.ready, ec.start, ec.fulfillment.address_change_request,
+    //          ec.complete, plus error responses for cancelled actions.
+    // ─────────────────────────────────────────────────────────────────────────
+    function EmbeddedCheckout({ continueUrl, recipient, productTitle, onComplete, onClose }) {
+      const iframeRef = React.useRef(null);
+      const [ecpStatus, setEcpStatus] = React.useState('loading'); // loading | connecting | ready | active | complete | error
+      const [embeddedUrl, setEmbeddedUrl] = React.useState(null);
+      const [ecpError, setEcpError] = React.useState(null);
+      const [addressRequested, setAddressRequested] = React.useState(false);
+      const [showRecipientEdit, setShowRecipientEdit] = React.useState(false);
+      const [editRecipient, setEditRecipient] = React.useState(null);
+      const pendingAddressRequestId = React.useRef(null);
+
+      // Build the embedded URL on mount
+      React.useEffect(() => {
+        fetch('/api/embedded-checkout-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ continue_url: continueUrl })
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.embedded_url) {
+              setEmbeddedUrl(data.embedded_url);
+              setEcpStatus('connecting');
+            } else {
+              setEcpError(data.error || 'Failed to build embedded checkout URL');
+              setEcpStatus('error');
+            }
+          })
+          .catch(err => {
+            setEcpError(err.message);
+            setEcpStatus('error');
+          });
+      }, [continueUrl]);
+
+      // Listen for ECP postMessage events from the checkout iframe
+      React.useEffect(() => {
+        function handleMessage(event) {
+          let msg;
+          try {
+            msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          } catch { return; }
+
+          // Only process JSON-RPC messages with a method starting with "ec."
+          if (!msg || !msg.method || !msg.method.startsWith('ec.')) return;
+
+          console.log('[ECP] Received:', msg.method, msg);
+
+          switch (msg.method) {
+            case 'ec.ready':
+              setEcpStatus('ready');
+              // Respond to ec.ready — confirm we're here, no payment instruments to declare
+              respondToCheckout(msg.id, {});
+              break;
+
+            case 'ec.start':
+              setEcpStatus('active');
+              // ec.start is a notification, no response needed
+              break;
+
+            case 'ec.fulfillment.address_change_request':
+              handleAddressChangeRequest(msg.id, msg.params);
+              break;
+
+            case 'ec.payment.change':
+              // Notification only — payment method changed in checkout UI
+              console.log('[ECP] Payment changed:', msg.params);
+              break;
+
+            case 'ec.complete':
+              setEcpStatus('complete');
+              console.log('[ECP] Checkout complete:', msg.params);
+              if (onComplete) onComplete(msg.params);
+              break;
+
+            default:
+              console.log('[ECP] Unhandled event:', msg.method);
+          }
+        }
+
+        window.addEventListener('message', handleMessage);
+        return () => window.removeEventListener('message', handleMessage);
+      }, [recipient, onComplete]);
+
+      // Send a JSON-RPC response back to the checkout iframe
+      function respondToCheckout(id, result) {
+        const iframe = iframeRef.current;
+        if (!iframe || !iframe.contentWindow) return;
+        const response = { jsonrpc: '2.0', id, result };
+        console.log('[ECP] Responding:', response);
+        iframe.contentWindow.postMessage(JSON.stringify(response), '*');
+      }
+
+      // Send a JSON-RPC error response (e.g. user cancelled)
+      function respondWithError(id, message) {
+        const iframe = iframeRef.current;
+        if (!iframe || !iframe.contentWindow) return;
+        const response = {
+          jsonrpc: '2.0',
+          id,
+          error: { code: 'abort_error', message }
+        };
+        console.log('[ECP] Error response:', response);
+        iframe.contentWindow.postMessage(JSON.stringify(response), '*');
+      }
+
+      // Handle ec.fulfillment.address_change_request
+      // If we have a valid recipient, auto-respond. Otherwise show the edit form.
+      function handleAddressChangeRequest(id, params) {
+        setAddressRequested(true);
+
+        if (recipient && recipient.firstName && recipient.address1) {
+          // Auto-respond with the gift recipient's address
+          respondWithRecipientAddress(id, recipient);
+        } else {
+          // No recipient yet — show inline form and hold the request
+          pendingAddressRequestId.current = id;
+          setEditRecipient({
+            firstName: recipient?.firstName || '',
+            lastName: recipient?.lastName || '',
+            address1: recipient?.address1 || '',
+            city: recipient?.city || '',
+            state: recipient?.state || '',
+            provinceCode: recipient?.provinceCode || '',
+            postalCode: recipient?.postalCode || '',
+            country: recipient?.country || 'United States'
+          });
+          setShowRecipientEdit(true);
+        }
+      }
+
+      // Respond with a formatted recipient address
+      function respondWithRecipientAddress(id, addr) {
+        respondToCheckout(id, {
+          checkout: {
+            fulfillment: {
+              methods: [
+                {
+                  type: 'shipping',
+                  selected_destination_id: 'gift-recipient-address',
+                  destinations: [
+                    {
+                      id: 'gift-recipient-address',
+                      first_name: addr.firstName,
+                      last_name: addr.lastName,
+                      street_address: addr.address1,
+                      address_locality: addr.city,
+                      address_region: addr.provinceCode || STATE_CODES[addr.state] || addr.state,
+                      postal_code: addr.postalCode,
+                      address_country: addr.country === 'United States' ? 'US' :
+                                       addr.country === 'Canada' ? 'CA' : 'US'
+                    }
+                  ]
+                }
+              ]
+            }
+          }
+        });
+        console.log('[ECP] Sent recipient address for', addr.firstName, addr.lastName);
+      }
+
+      // Submit the edited recipient address
+      function submitEditedAddress() {
+        if (!editRecipient || !pendingAddressRequestId.current) return;
+        const addr = {
+          ...editRecipient,
+          provinceCode: STATE_CODES[editRecipient.state] || editRecipient.state
+        };
+        respondWithRecipientAddress(pendingAddressRequestId.current, addr);
+        pendingAddressRequestId.current = null;
+        setShowRecipientEdit(false);
+      }
+
+      // Cancel the address edit — send abort error
+      function cancelAddressEdit() {
+        if (pendingAddressRequestId.current) {
+          respondWithError(pendingAddressRequestId.current, 'User cancelled address selection.');
+          pendingAddressRequestId.current = null;
+        }
+        setShowRecipientEdit(false);
+      }
+
+      const statusLabels = {
+        loading: 'Preparing checkout...',
+        connecting: 'Connecting to merchant...',
+        ready: 'Checkout ready',
+        active: 'Checkout in progress',
+        complete: 'Order complete!',
+        error: 'Checkout error'
+      };
+
+      const statusColors = {
+        loading: '#1976d2',
+        connecting: '#1976d2',
+        ready: '#2e7d32',
+        active: '#5c6bc0',
+        complete: '#4caf50',
+        error: '#f44336'
+      };
+
+      return (
+        <Dialog open fullScreen onClose={onClose} PaperProps={{ sx: { display: 'flex', flexDirection: 'column' } }}>
+          {/* Header */}
+          <AppBar position="relative" sx={{ bgcolor: statusColors[ecpStatus] || '#5c6bc0', flexShrink: 0 }}>
+            <Toolbar>
+              <IconButton edge="start" color="inherit" onClick={onClose}>
+                <span className="material-icons">close</span>
+              </IconButton>
+              <Box sx={{ flex: 1, ml: 1 }}>
+                <Typography variant="h6">
+                  {ecpStatus === 'complete' ? 'Order Confirmed!' : `Checkout — ${productTitle || 'Gift'}`}
+                </Typography>
+                <Typography variant="caption" sx={{ opacity: 0.85 }}>
+                  {statusLabels[ecpStatus]}
+                  {addressRequested && ecpStatus === 'active' && ' • Recipient address sent ✓'}
+                </Typography>
+              </Box>
+              {(ecpStatus === 'loading' || ecpStatus === 'connecting') && (
+                <CircularProgress size={24} sx={{ color: 'white' }} />
+              )}
+            </Toolbar>
+          </AppBar>
+
+          {/* Error state */}
+          {ecpStatus === 'error' && (
+            <Box sx={{ p: 4, textAlign: 'center' }}>
+              <span className="material-icons" style={{ fontSize: 64, color: '#f44336' }}>error_outline</span>
+              <Typography variant="h6" sx={{ mt: 2, mb: 1 }}>Couldn't load checkout</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>{ecpError}</Typography>
+              <Button variant="contained" onClick={onClose}>Go Back</Button>
+            </Box>
+          )}
+
+          {/* Loading state */}
+          {ecpStatus === 'loading' && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, gap: 2 }}>
+              <CircularProgress size={48} />
+              <Typography color="text.secondary">Building embedded checkout URL...</Typography>
+            </Box>
+          )}
+
+          {/* Recipient address edit overlay (shown when checkout requests address and we need user input) */}
+          {showRecipientEdit && editRecipient && (
+            <Paper sx={{ p: 3, m: 2, position: 'relative', zIndex: 10, border: '2px solid #5c6bc0', borderRadius: 2 }}>
+              <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                <span className="material-icons">location_on</span>
+                Gift Recipient Address
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                The merchant's checkout is requesting a shipping address. Confirm or update the recipient's address below.
+              </Typography>
+              <Grid container spacing={2} sx={{ mb: 2 }}>
+                <Grid item xs={6}>
+                  <TextField fullWidth label="First name" size="small" value={editRecipient.firstName}
+                    onChange={(e) => setEditRecipient({ ...editRecipient, firstName: e.target.value })} />
+                </Grid>
+                <Grid item xs={6}>
+                  <TextField fullWidth label="Last name" size="small" value={editRecipient.lastName}
+                    onChange={(e) => setEditRecipient({ ...editRecipient, lastName: e.target.value })} />
+                </Grid>
+              </Grid>
+              <TextField fullWidth label="Address" size="small" sx={{ mb: 2 }} value={editRecipient.address1}
+                onChange={(e) => setEditRecipient({ ...editRecipient, address1: e.target.value })} />
+              <Grid container spacing={2} sx={{ mb: 2 }}>
+                <Grid item xs={5}>
+                  <TextField fullWidth label="City" size="small" value={editRecipient.city}
+                    onChange={(e) => setEditRecipient({ ...editRecipient, city: e.target.value })} />
+                </Grid>
+                <Grid item xs={4}>
+                  <FormControl fullWidth size="small">
+                    <InputLabel>State</InputLabel>
+                    <Select value={editRecipient.state} label="State"
+                      onChange={(e) => setEditRecipient({ ...editRecipient, state: e.target.value })}>
+                      {US_STATES.map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={3}>
+                  <TextField fullWidth label="ZIP" size="small" value={editRecipient.postalCode}
+                    onChange={(e) => setEditRecipient({ ...editRecipient, postalCode: e.target.value })} />
+                </Grid>
+              </Grid>
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <Button variant="contained" onClick={submitEditedAddress}
+                  disabled={!editRecipient.firstName || !editRecipient.address1 || !editRecipient.city || !editRecipient.state}
+                  sx={{ bgcolor: '#000', '&:hover': { bgcolor: '#333' } }}>
+                  Send to Checkout
+                </Button>
+                <Button variant="outlined" onClick={cancelAddressEdit}>Cancel</Button>
+              </Box>
+            </Paper>
+          )}
+
+          {/* Checkout iframe */}
+          {embeddedUrl && ecpStatus !== 'error' && (
+            <Box sx={{ flex: 1, position: 'relative', display: ecpStatus === 'loading' ? 'none' : 'flex' }}>
+              <iframe
+                ref={iframeRef}
+                src={embeddedUrl}
+                style={{ width: '100%', height: '100%', border: 'none', flex: 1 }}
+                allow="payment"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-top-navigation"
+                title="Shopify Embedded Checkout"
+              />
+            </Box>
+          )}
+
+          {/* Recipient address badge (shows at bottom when address was auto-sent) */}
+          {addressRequested && !showRecipientEdit && ecpStatus === 'active' && recipient && (
+            <Paper sx={{ p: 1.5, mx: 2, mb: 2, display: 'flex', alignItems: 'center', gap: 1, bgcolor: '#e8f5e9', borderRadius: 2, flexShrink: 0 }}>
+              <span className="material-icons" style={{ color: '#2e7d32' }}>check_circle</span>
+              <Typography variant="body2">
+                Shipping to: <strong>{recipient.firstName} {recipient.lastName}</strong> — {recipient.address1}, {recipient.city}, {recipient.state} {recipient.postalCode}
+              </Typography>
+            </Paper>
+          )}
+        </Dialog>
+      );
+    }
+
+    // Render
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
