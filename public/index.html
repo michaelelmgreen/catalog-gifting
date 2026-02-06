@@ -1548,24 +1548,24 @@
       }
 
       // Handle ec.fulfillment.address_change_request
+      // Always show the recipient address edit panel so the user can
+      // review / update the gift recipient's address from our app,
+      // rather than falling through to Shopify's built-in address form.
       function handleAddressChangeRequest(id, params) {
+        console.log('[ECP] 📍 Address change requested — showing recipient editor');
         setAddressRequested(true);
-        if (recipient && recipient.firstName && recipient.address1) {
-          respondWithRecipientAddress(id, recipient);
-        } else {
-          pendingAddressRequestId.current = id;
-          setEditRecipient({
-            firstName: recipient?.firstName || '',
-            lastName: recipient?.lastName || '',
-            address1: recipient?.address1 || '',
-            city: recipient?.city || '',
-            state: recipient?.state || '',
-            provinceCode: recipient?.provinceCode || '',
-            postalCode: recipient?.postalCode || '',
-            country: recipient?.country || 'United States'
-          });
-          setShowRecipientEdit(true);
-        }
+        pendingAddressRequestId.current = id;
+        setEditRecipient({
+          firstName: recipient?.firstName || '',
+          lastName: recipient?.lastName || '',
+          address1: recipient?.address1 || '',
+          city: recipient?.city || '',
+          state: recipient?.state || '',
+          provinceCode: recipient?.provinceCode || '',
+          postalCode: recipient?.postalCode || '',
+          country: recipient?.country || 'United States'
+        });
+        setShowRecipientEdit(true);
       }
 
       function respondWithRecipientAddress(id, addr) {
