@@ -8,6 +8,11 @@
       "dev.ucp.shopping.checkout": [{ "version": "2026-01-11" }],
       "dev.ucp.shopping.fulfillment": [{ "version": "2026-01-11" }]
     },
-    "delegations": ["fulfillment.address_change"]
+    "delegations": ["fulfillment.address_change"],
+    "transports": {
+      "embedded": {
+        "schema": "https://ucp.dev/services/shopping/embedded.openrpc.json"
+      }
+    }
   }
 }

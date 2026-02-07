@@ -1433,13 +1433,46 @@
           switch (msg.method) {
             // ── ec.ready (Request — MUST respond) ────────────────────────
             // This initializes the ECP channel. We echo back the request id.
+            // Per ECP spec, we can include a checkout object in the response
+            // to pre-populate the checkout UI with fulfillment data.
             case 'ec.ready': {
               const delegations = msg.params?.delegate || [];
               acceptedDelegations.current = delegations;
-              console.log('[ECP] Delegations accepted:', delegations);
-              console.log('[ECP] Checkout origin:', checkoutOriginRef.current);
+              const hasFulfillmentDelegation = delegations.includes('fulfillment.address_change');
+              console.log('[ECP] ✅ ec.ready received');
+              console.log('[ECP] 📋 Delegations requested: fulfillment.address_change');
+              console.log('[ECP] 📋 Delegations ACCEPTED by checkout:', JSON.stringify(delegations));
+              console.log('[ECP] 📋 Fulfillment address delegation:', hasFulfillmentDelegation ? '✅ ACCEPTED' : '❌ NOT ACCEPTED');
+              console.log('[ECP] 📋 Checkout origin:', checkoutOriginRef.current);
               setEcpStatus('ready');
-              respondToCheckout(msg.id, {});
+
+              // Build the ec.ready response — include fulfillment address
+              // so checkout pre-populates with the gift recipient's address.
+              const readyResult = {};
+              if (recipient && recipient.firstName && recipient.address1) {
+                readyResult.checkout = {
+                  fulfillment: {
+                    methods: [{
+                      id: 'shipping_method_1',
+                      type: 'shipping',
+                      selected_destination_id: 'gift-recipient-address',
+                      destinations: [{
+                        id: 'gift-recipient-address',
+                        first_name: recipient.firstName,
+                        last_name: recipient.lastName || '',
+                        street_address: recipient.address1,
+                        address_locality: recipient.city || '',
+                        address_region: recipient.provinceCode || STATE_CODES[recipient.state] || recipient.state || '',
+                        postal_code: recipient.postalCode || '',
+                        address_country: recipient.country === 'United States' ? 'US' :
+                                         recipient.country === 'Canada' ? 'CA' : 'US'
+                      }]
+                    }]
+                  }
+                };
+                console.log('[ECP] 📦 Including recipient address in ec.ready response:', recipient.firstName, recipient.lastName);
+              }
+              respondToCheckout(msg.id, readyResult);
               break;
             }
 
@@ -1551,8 +1584,20 @@
       // Always show the recipient address edit panel so the user can
       // review / update the gift recipient's address from our app,
       // rather than falling through to Shopify's built-in address form.
+      const fulfillmentMethodRef = React.useRef(null);
+
       function handleAddressChangeRequest(id, params) {
         console.log('[ECP] 📍 Address change requested — showing recipient editor');
+        console.log('[ECP] 📍 Request params:', JSON.stringify(params, null, 2));
+
+        // Preserve the fulfillment method id from Shopify's request
+        // so our response echoes back the same method structure.
+        const methods = params?.checkout?.fulfillment?.methods;
+        if (methods && methods.length > 0) {
+          fulfillmentMethodRef.current = methods[0];
+          console.log('[ECP] 📍 Fulfillment method id:', methods[0].id);
+        }
+
         setAddressRequested(true);
         pendingAddressRequestId.current = id;
         setEditRecipient({
@@ -1569,14 +1614,20 @@
       }
 
       function respondWithRecipientAddress(id, addr) {
-        respondToCheckout(id, {
+        // Per ECP spec: respond with updated fulfillment.methods, preserving
+        // the method id from the incoming request. The checkout treats this
+        // as a PUT-style replacement.
+        const methodId = fulfillmentMethodRef.current?.id || 'shipping_method_1';
+        const destId = 'gift-recipient-address';
+        const response = {
           checkout: {
             fulfillment: {
               methods: [{
+                id: methodId,
                 type: 'shipping',
-                selected_destination_id: 'gift-recipient-address',
+                selected_destination_id: destId,
                 destinations: [{
-                  id: 'gift-recipient-address',
+                  id: destId,
                   first_name: addr.firstName,
                   last_name: addr.lastName,
                   street_address: addr.address1,
@@ -1589,8 +1640,10 @@
               }]
             }
           }
-        });
-        console.log('[ECP] Sent recipient address for', addr.firstName, addr.lastName);
+        };
+        console.log('[ECP] 📦 Address response:', JSON.stringify(response, null, 2));
+        respondToCheckout(id, response);
+        console.log('[ECP] ✅ Sent recipient address for', addr.firstName, addr.lastName, 'via method', methodId);
       }
 
       function submitEditedAddress() {
